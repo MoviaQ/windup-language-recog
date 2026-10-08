@@ -12,3 +12,5 @@ reports/
 dist/
 build/
 *.egg-info/
+*.so
+*.pyd

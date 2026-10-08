@@ -10,6 +10,13 @@ from pathlib import Path
 import torch
 from torch import nn
 
+try:
+    from _windup_native import char_features as _native_char_features
+except ModuleNotFoundError as error:
+    if error.name != "_windup_native":
+        raise
+    _native_char_features = None
+
 BUCKETS = 8192
 
 
@@ -33,14 +40,23 @@ def encode(
     if not any(char.isalpha() for char in text):
         raise ValueError("Text must contain at least one letter.")
     text = " " + text + " "
-    features = [
-        int.from_bytes(
-            hashlib.blake2b(text[i : i + n].encode(), digest_size=8).digest(), "little"
-        )
-        % buckets
-        for n in ngrams
-        for i in range(len(text) - n + 1)
-    ]
+    if (
+        _native_char_features is not None
+        and isinstance(buckets, int)
+        and 0 < buckets <= (1 << 64) - 1
+        and ngrams in ((1, 2, 3), (1, 2, 3, 4, 5))
+    ):
+        features = _native_char_features(text, ngrams, buckets)
+    else:
+        features = [
+            int.from_bytes(
+                hashlib.blake2b(text[i : i + n].encode(), digest_size=8).digest(),
+                "little",
+            )
+            % buckets
+            for n in ngrams
+            for i in range(len(text) - n + 1)
+        ]
     if word_features:
         words = re.findall(r"[^\W\d_]+(?:['’][^\W\d_]+)*", text, flags=re.UNICODE)
         for word in words:
@@ -101,9 +117,7 @@ def train(data: Path, output: Path, epochs: int) -> None:
             loss.backward()
             optimizer.step()
         if (epoch + 1) % 20 == 0 or epoch == epochs - 1:
-            print(
-                f"Epoch {epoch + 1}/{epochs}, last batch loss: {loss.item():.4f}"
-            )
+            print(f"Epoch {epoch + 1}/{epochs}, last batch loss: {loss.item():.4f}")
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": model.state_dict(), "languages": languages}, output)
     print(f"Saved model: {output}")

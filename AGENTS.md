@@ -29,6 +29,8 @@ A CPU language classifier for 100 language codes. Hashes character n-grams and w
 .venv/bin/python language_detector.py train --data data/demo.csv --epochs 120 --model model-demo.pt
 ```
 
+Optional native build: `python -m pip install setuptools` then `python setup_native.py build_ext --inplace`. Check both native and Python fallback. See `native/README.md`.
+
 ## Architecture
 
 ```text

@@ -29,3 +29,7 @@ PyTorch, ftfy, NumPy, and pycountry are installed from their respective distribu
 ## Project-authored material
 
 `data/demo.csv`, `data/synthetic.csv`, and `assets/logo.png` are project-authored demonstration/synthetic material and logo artwork, distributed under the repository's MIT license. Synthetic evaluation is illustrative and cannot substitute for an independently labeled application benchmark.
+
+## Optional native encoder
+
+`native/blake2/` vendors the unmodified official BLAKE2 reference implementation by Samuel Neves, at commit `ed1974ea83433eba7b2d95c5dcd9ac33cb847913`. This project selects its offered **CC0 1.0** license option. See [source and attribution](native/README.md) and [full license](native/blake2/COPYING). The upstream files retain their own notices.
