@@ -1,0 +1,105 @@
+{
+  "samples": 1000,
+  "encoding_equality_checked": 1000,
+  "csv_sha256": "9fb3146b8ff69e5717061d5f6148c9d26908cc16c7cd537d97c01c0b307e4405",
+  "model_sha256": "ec2bb56baba69d1b71d7cf288d0723199f169dfff45a3425b5544fc41bb2fe30",
+  "environment": {
+    "python": "3.13.0",
+    "torch": "2.14.1",
+    "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "threads": 2
+  },
+  "protocol": "Seed913. Varied CSV sample, one pass after clearing native fragment cache; repeated inputs 30warmup+1000calls. Cleanup+encoding+PyTorch included, imports/loading/extraction excluded. Cache stores exact <=20-byte fragment hashes in32768slots, about1MiB; never predictions. No full-text memoization.",
+  "results": {
+    "python": {
+      "varied_pass_from_empty_fragment_cache": {
+        "median_ms": 0.1729580108076334,
+        "p95_ms": 0.592165975831449
+      },
+      "repeated_warm_fragment_cache": {
+        "64": {
+          "median_ms": 0.2264999784529209,
+          "p95_ms": 0.27191604021936655
+        },
+        "256": {
+          "median_ms": 0.7792290416546166,
+          "p95_ms": 0.8649170631542802
+        },
+        "2000": {
+          "median_ms": 6.043853994924575,
+          "p95_ms": 6.376125034876168
+        }
+      }
+    },
+    "native": {
+      "varied_pass_from_empty_fragment_cache": {
+        "median_ms": 0.10556250344961882,
+        "p95_ms": 0.31483289785683155
+      },
+      "repeated_warm_fragment_cache": {
+        "64": {
+          "median_ms": 0.0962914782576263,
+          "p95_ms": 0.11100003030151129
+        },
+        "256": {
+          "median_ms": 0.2862500259652734,
+          "p95_ms": 0.3624579403549433
+        },
+        "2000": {
+          "median_ms": 1.9985624821856618,
+          "p95_ms": 2.6253750547766685
+        }
+      }
+    },
+    "fasttext_bin": {
+      "varied_pass_from_empty_fragment_cache": {
+        "median_ms": 0.04283356247469783,
+        "p95_ms": 0.17987505998462439
+      },
+      "repeated_warm_fragment_cache": {
+        "64": {
+          "median_ms": 0.047083012759685516,
+          "p95_ms": 0.054458039812743664
+        },
+        "256": {
+          "median_ms": 0.15416648238897324,
+          "p95_ms": 0.18037506379187107
+        },
+        "2000": {
+          "median_ms": 1.127270981669426,
+          "p95_ms": 1.2885000323876739
+        }
+      }
+    },
+    "fasttext_ftz": {
+      "varied_pass_from_empty_fragment_cache": {
+        "median_ms": 0.037437945138663054,
+        "p95_ms": 0.12454099487513304
+      },
+      "repeated_warm_fragment_cache": {
+        "64": {
+          "median_ms": 0.049166963435709476,
+          "p95_ms": 0.05470798350870609
+        },
+        "256": {
+          "median_ms": 0.15612499555572867,
+          "p95_ms": 0.1807499211281538
+        },
+        "2000": {
+          "median_ms": 1.1352495639584959,
+          "p95_ms": 1.2600839836522937
+        }
+      }
+    }
+  },
+  "fasttext_models": {
+    "fasttext_bin": {
+      "bytes": 131266198,
+      "sha256": "7e69ec5451bc261cc7844e49e4792a85d7f09c06789ec800fc4a44aec362764e"
+    },
+    "fasttext_ftz": {
+      "bytes": 938013,
+      "sha256": "8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83"
+    }
+  }
+}

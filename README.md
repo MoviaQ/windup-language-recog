@@ -24,6 +24,8 @@ cd windup-language-recog
 
 `setup.sh` creates a virtual environment and installs PyTorch and ftfy. Python 3.10+ and an internet connection are needed for installation; inference then runs offline. The bundled `model.pt` needs no training before use.
 
+For an optional faster feature encoder, see [native build instructions](native/README.md). The network remains PyTorch and the model weights are unchanged.
+
 ## Python API
 
 Run from the repository directory, or add it to your Python import path:
