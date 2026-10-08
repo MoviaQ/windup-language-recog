@@ -13,6 +13,22 @@ Wind-Up recognizes the language of short messages and longer text using hashed c
 
 The implementation is deliberately approachable: useful as a language detector and as a practical introduction to PyTorch.
 
+## Intended use and fastText comparison
+
+Wind-Up is designed for local language detection in short application messages: support requests, contact forms, and helpdesk titles or descriptions. A typical integration uses the predicted language to suggest a support queue or response language. Its ticket API extracts substantive text from a title and description, and its character and word features can capture language cues in messages containing technical terms or occasional foreign words. Very short or heavily mixed messages still need an uncertainty policy and evaluation on your own examples.
+
+| Consideration | Wind-Up | fastText language identification |
+| --- | --- | --- |
+| Language coverage | 100 supported codes | 176 supported codes |
+| Main reason to choose it | Readable PyTorch implementation, configurable preprocessing and training, and a title/description API | Broad language coverage and fast general-purpose inference |
+| Local inference | CPU, offline after installation; PyTorch runtime | CPU, offline after installation; fastText runtime |
+| Measured latency | Optional native encoder: 0.106 ms median on 1,000 varied public texts | `.bin`: 0.043 ms; `.ftz`: 0.037 ms on the same sample |
+| Uncertainty handling | Calibrated checkpoints support returning `und` below a stored confidence threshold | Prediction scores can be used with an application-defined rejection policy |
+
+Choose Wind-Up when you want to understand or adapt the detector in PyTorch and integrate message cleanup into your application. fastText remains a strong baseline when speed and wider language coverage are priorities. See the [official fastText models](https://fasttext.cc/docs/en/language-identification.html) and our [latency protocol and environment](docs/native-performance.md); these timings exclude model loading and structured-description extraction.
+
+The bundled checkpoint is trained on public WiLI-2018 and MASSIVE 1.1 data. The support-message workflow is an intended use, not a claim that these released weights outperform fastText on real support traffic. The release's 98.29% public-test accuracy is not a head-to-head fastText result or a guarantee for one-sentence tickets. Compare both models on the same independently labeled application test before choosing an automatic routing policy. Wind-Up returns one language per input, not language spans or a translation.
+
 ## Quick start
 
 ```bash
