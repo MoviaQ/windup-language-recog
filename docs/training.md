@@ -1,6 +1,6 @@
 # Reproduce public-data training
 
-The released model is initialized separately and trained only on public **WiLI-2018** and **MASSIVE 1.1** source data. Training is optional: normal inference uses the bundled `model.pt`.
+These commands reproduce the public **WiLI-2018** and **MASSIVE 1.1** base-model workflow. The bundled v4 weights additionally use support-domain adaptation and synthetic training augmentation. The complete adaptation workflow is not distributed, so these commands do not reproduce v4. Training is optional: normal inference uses the bundled `model.pt`.
 
 ## Prepare and train
 
@@ -28,7 +28,7 @@ The preparation script verifies source archive SHA-256 checksums, and records so
 - MASSIVE contributes multilingual localized assistant utterances, using official train/dev/test partitions. Locale prefixes map to output codes, so two Chinese locales share `zh`.
 - Cleanup runs before normalized-key duplicate checks. Keys case-fold text, remove accents and nonletters, and inspect up to 384 characters. Examples with conflicting language labels under this rule are excluded.
 - Held-out synthetic examples are reserved. Test takes priority over validation, and validation over training when normalized examples overlap.
-- Longer examples produce sentence or word excerpts; training may use two excerpts. Short examples remain intact. No authored demo or synthetic evaluation CSV is added to this release's training set.
+- Longer examples produce sentence or word excerpts; training may use two excerpts. Short examples remain intact. No authored demo or synthetic evaluation CSV is added to the public base training set.
 
 These checks protect against exact normalized overlap, not semantic duplicates or every possible overlap in the underlying sources. Keep that distinction in evaluation claims.
 

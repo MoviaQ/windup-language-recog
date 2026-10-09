@@ -1,6 +1,6 @@
 # Model weights license
 
-The released `model.pt` is a new checkpoint trained for this repository from public WiLI-2018 and MASSIVE 1.1 data. It is not covered by the software's MIT license.
+The released `model.pt` is the v4 checkpoint adapted from the public WiLI-2018 and MASSIVE 1.1 base through support-domain fine-tuning. It is not covered by the software's MIT license.
 
 To the extent copyright or similar rights apply to the model weight contributions made by this project, Contributors license those contributions under **Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)**.
 
@@ -13,6 +13,6 @@ This grant does not relicense upstream datasets or grant rights Contributors do 
 
 Suggested attribution:
 
-> Wind-Up Language Recognition model, by Contributors, CC BY-SA 4.0. Trained using WiLI-2018 (Thoma, 2018) and MASSIVE 1.1 (Amazon, 2022). See the project's third-party notices for upstream terms. [Repository](https://github.com/MoviaQ/windup-language-recog).
+> Wind-Up Language Recognition model, by Contributors, CC BY-SA 4.0. Trained using WiLI-2018 (Thoma, 2018) and MASSIVE 1.1 (Amazon, 2022). Adapted for support messages. See the project's third-party notices for upstream terms. [Repository](https://github.com/MoviaQ/windup-language-recog).
 
 Software, documentation, project-authored demo/synthetic examples, and the logo remain under MIT. Dependency licenses apply to dependencies independently.
