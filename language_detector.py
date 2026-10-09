@@ -15,6 +15,19 @@ BUCKETS = 8192
 _word_cache: dict[tuple[str, int], int] = {}
 _word_cache_lock = threading.Lock()
 
+# Optional cluster merge: Bosnian/Croatian/Serbian are mutually intelligible
+# ijekavian/ekavian varieties that a hashed char-bag cannot separate reliably.
+# Off by default; a merged checkpoint uses 98 classes with `hbs`.
+LANG_MERGE_HBS = {"bs": "hbs", "hr": "hbs", "sr": "hbs"}
+
+
+def merge_code(code: str, merge_hbs: bool = False) -> str:
+    return LANG_MERGE_HBS.get(code, code) if merge_hbs else code
+
+
+def merge_languages(languages: list[str], merge_hbs: bool = False) -> list[str]:
+    return sorted({merge_code(code, merge_hbs) for code in languages})
+
 
 def encode(
     text: str,

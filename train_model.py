@@ -13,7 +13,7 @@ import torch
 from torch import nn
 
 from dataset_utils import read_csv
-from language_detector import build_model, encode
+from language_detector import build_model, encode, merge_code, merge_languages
 
 ROOT = Path(__file__).resolve().parent
 
@@ -33,6 +33,9 @@ class EncodedDataset:
             rows.extend(read_csv(file))
         if not rows:
             raise ValueError("Dataset is empty.")
+        if config.get("merge_hbs"):
+            for row in rows:
+                row["language"] = merge_code(row["language"], True)
         lookup = {language: index for index, language in enumerate(languages)}
         self.targets = torch.tensor(
             [lookup[row["language"]] for row in rows], dtype=torch.long
@@ -133,6 +136,7 @@ def main() -> None:
     parser.add_argument("--embedding-dim", type=int, default=64)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--arch", choices=("linear", "mlp"), default="linear")
+    parser.add_argument("--merge-hbs", action="store_true")
     parser.add_argument("--train-length", type=int, default=384)
     parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--seed", type=int, default=42)
@@ -175,12 +179,13 @@ def main() -> None:
     torch.manual_seed(args.seed)
     torch.set_num_threads(args.threads)
     manifest = json.loads((args.data_dir / "manifest.json").read_text(encoding="utf-8"))
-    languages = manifest["languages"]
+    languages = merge_languages(manifest["languages"], args.merge_hbs)
     config = {
         "buckets": args.buckets,
         "embedding_dim": args.embedding_dim,
         "hidden_dim": args.hidden_dim,
         "arch": args.arch,
+        "merge_hbs": args.merge_hbs,
         "ngrams": list(range(1, args.ngram_max + 1)),
         "max_length": 2000,
         "word_features": args.word_features,
