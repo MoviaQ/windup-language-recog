@@ -3,7 +3,7 @@
 ## v21 checkpoint — 2026-10-10
 
 - Acceptance-policy-only release: the raw neural weights, ensemble members, weights, and temperatures are unchanged from v20.
-- Refit `min_confidence_by_language_and_length` on the public validation split (100,175 rows; disjoint from train and test), capped at v20's value so v21 never rejects a confidence-accepted v20 sample; 94 (language, length) cells were lowered.
+- Refit `min_confidence_by_language_and_length` on the public validation split (100,175 rows; disjoint from train and test), capped so v21 never raises a confidence threshold above v20's; 94 (language, length) cells were lowered.
 - Add per-length top-2 softmax margin floors (`short` 0.88, `long` 0.66): an accepted prediction must also have (top1 probability - top2 probability) at or above its length group's floor.
 - Public test: accepted precision improves (99.6708% vs 99.6456%) with fewer accepted errors (595 vs 637) and higher coverage (95.34% vs 94.82%); accepted correct responses rise to 180,138.
 - Ticket/application diagnostics are not regressed; the authored and difficult-language sets accept more correct responses.

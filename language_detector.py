@@ -298,8 +298,11 @@ class LanguageDetector:
             confidence, index = probabilities.max(dim=1)
             confidence = confidence.item()
             best = self.languages[index.item()]
-            top2 = probabilities.topk(2, dim=1).values
-            margin = (top2[0, 0] - top2[0, 1]).item()
+            if probabilities.size(1) >= 2:
+                top2 = probabilities.topk(2, dim=1).values
+                margin = (top2[0, 0] - top2[0, 1]).item()
+            else:
+                margin = confidence
         threshold = self.calibration.get("min_confidence")
         threshold = self.calibration.get("min_confidence_by_language", {}).get(
             best, threshold
@@ -307,7 +310,7 @@ class LanguageDetector:
         ambiguous = False
         length_group = None
         contextual = self.calibration.get("min_confidence_by_language_and_length", {})
-        margin_floors = self.calibration.get("min_margin_by_language_and_length") or self.calibration.get("min_margin_by_length", {})
+        margin_floors = self.calibration.get("min_margin_by_length", {})
         if contextual or self._ambiguous_single_words or self._single_word_language or margin_floors:
             length_group, single_word = evidence_profile(text, case_sensitive=self.calibration.get("word_evidence_case_sensitive", False))
             lexical_language = self._single_word_language.get(single_word)
