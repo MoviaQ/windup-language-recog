@@ -7,7 +7,7 @@
 3. Every character n-gram of lengths 1–5 is hashed with stable BLAKE2b into one of 131,072 buckets. Whole words are separately hashed with a namespace prefix, then repeated four times to increase their weight.
 4. `batch` flattens feature IDs and records the start of each input's feature bag.
 5. Each network averages 64-dimensional vectors with `nn.EmbeddingBag(..., mode="mean")`. The MLP adds a 128-unit ReLU layer; the earlier linear network directly classifies the pooled vectors. Both output 100 logits.
-6. v20 combines temperature-normalized logits with weights 0.75 (MLP) and 0.25 (linear). The largest combined logit selects the raw label. Detail mode applies final temperature scaling and consensus, language/length, and standalone-word acceptance rules.
+6. v21 combines temperature-normalized logits with weights 0.75 (MLP) and 0.25 (linear), unchanged from v20. The largest combined logit selects the raw label. Detail mode applies final temperature scaling, consensus, language/length and per-length top-2 margin acceptance rules, and standalone-word checks.
 
 ```text
 Hashed features → EmbeddingBag → ReLU MLP → calibrated logits ─┐
@@ -26,6 +26,6 @@ Hashing bounds neural-network size. The optional standalone-word policy also use
 
 ## Checkpoints
 
-A checkpoint contains `state_dict`, supported `languages`, feature/model `config`, and training provenance. Optional `calibration` is separate from architecture configuration. v20 adds `ensemble` with companion checkpoint weights, member temperatures, mixing weights, and an agreement requirement. Loader validation checks compatible language ordering and feature encoding. Calibration includes language/length cutoffs and case-sensitive single-word tables. The loader uses `torch.load(..., map_location="cpu", weights_only=True)` and defaults missing configuration fields for older small demonstration checkpoints. These defaults are compatibility behavior, not the release architecture.
+A checkpoint contains `state_dict`, supported `languages`, feature/model `config`, and training provenance. Optional `calibration` is separate from architecture configuration. v20 added `ensemble` with companion checkpoint weights, member temperatures, mixing weights, and an agreement requirement; v21 keeps that ensemble and changes only the acceptance calibration. Loader validation checks compatible language ordering and feature encoding. Calibration includes language/length cutoffs, per-length top-2 margin floors, and case-sensitive single-word tables. The loader uses `torch.load(..., map_location="cpu", weights_only=True)` and defaults missing configuration fields for older small demonstration checkpoints. These defaults are compatibility behavior, not the release architecture.
 
 No server, port, database, API key, GPU, or remote tokenizer is required for inference. Input text remains within the calling process. Dependencies must first be installed locally.

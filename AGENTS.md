@@ -4,7 +4,7 @@
 
 ## What
 
-A CPU language classifier for 100 language codes. Hashes character n-grams and whole words into an EmbeddingBag, then combines MLP and linear-network logits in the v20 release.
+A CPU language classifier for 100 language codes. Hashes character n-grams and whole words into an EmbeddingBag, then combines MLP and linear-network logits in the v21 release, whose acceptance calibration adds per-length top-2 margin floors on top of the v20 ensemble.
 
 ## Quick start
 

@@ -53,9 +53,9 @@ print(result["language"], result["confidence"], result["calibrated"])
 code_or_und = model.predict_ticket("Access problem", "Please help me sign in.", allow_uncertain=True)
 ```
 
-Results contain `language`, `best_language`, `confidence`, `uncertain`, and `calibrated`. Confidence is the largest softmax score, optionally temperature-scaled. With no checkpoint calibration, `calibrated` is false and the method always returns its best supported code.
+Results contain `language`, `best_language`, `confidence`, `margin`, `uncertain`, and `calibrated`. Confidence is the largest softmax score and margin is the difference between the top two softmax scores, both optionally temperature-scaled. With no checkpoint calibration, `calibrated` is false and the method always returns its best supported code.
 
-The v20 checkpoint combines calibrated MLP and linear-network logits. Its acceptance policy requires model agreement and uses cutoffs by language and text length, plus case-sensitive single-word evidence. It can return `und` even when the softmax score is high. These rules are not a correctness guarantee.
+The v21 checkpoint keeps v20's calibrated MLP and linear-network logits. Its acceptance policy requires model agreement and uses cutoffs by language and text length, a per-length top-2 margin floor, plus case-sensitive single-word evidence. The margin floor requires (top1 probability - top2 probability) to meet a stored value for the input's length group. It can return `und` even when the softmax score is high. These rules are not a correctness guarantee.
 
 Older calibrated checkpoints storing only `temperature` and `min_confidence` still use their single threshold. `predict_ticket(..., allow_uncertain=True)` requires calibration and can return `und` for empty cleaned text. This reduces accepted predictions; it does not guarantee an accuracy level or reliably identify unsupported languages. Fit calibration on validation data, and evaluate accuracy together with acceptance coverage on held-out data.
 
