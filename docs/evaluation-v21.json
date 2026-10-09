@@ -1,0 +1,105 @@
+{
+  "model_version": "v21",
+  "model_sha256": "358586ac346be2f4c263d90a6c521cf766a94a3b60787e8efefd424e4337579b",
+  "model_bytes": 67879025,
+  "language_count": 100,
+  "acceptance_calibration": {
+    "raw_weights_changed": false,
+    "summary": "v21 keeps v20's raw neural weights, ensemble members, weights, and temperatures. Only the acceptance calibration changed.",
+    "min_confidence_by_language_and_length": "Refit on the public validation split (100,175 rows; disjoint from train and test) and capped at v20's value, so v21 never rejects a confidence-accepted v20 sample; 94 (language, length) cells were lowered.",
+    "min_margin_by_length": {
+      "short": 0.88,
+      "long": 0.66
+    },
+    "min_margin_rule": "An accepted prediction must also have (top1 probability - top2 probability) at or above the floor for its length group.",
+    "fit_data": "Public validation split and existing authored development sets only; no diagnostic test labels were used to fit thresholds or margins."
+  },
+  "historical_application_diagnostics": {
+    "external_200": {
+      "v20": {
+        "samples": 200,
+        "correct": 198,
+        "accepted": 183,
+        "accepted_correct": 183,
+        "accepted_errors": 0
+      },
+      "v21": {
+        "samples": 200,
+        "correct": 198,
+        "accepted": 183,
+        "accepted_correct": 183,
+        "accepted_errors": 0
+      }
+    },
+    "external_198": {
+      "v20": {
+        "samples": 198,
+        "correct": 186,
+        "accepted": 176,
+        "accepted_correct": 174,
+        "accepted_errors": 2
+      },
+      "v21": {
+        "samples": 198,
+        "correct": 186,
+        "accepted": 176,
+        "accepted_correct": 174,
+        "accepted_errors": 2
+      }
+    }
+  },
+  "final_64_diagnostic": {
+    "v20": {
+      "samples": 64,
+      "known_samples": 61,
+      "known_raw_correct": 61,
+      "accepted": 56,
+      "accepted_correct": 56,
+      "accepted_errors": 0,
+      "ambiguous_samples": 3,
+      "ambiguous_accepted": 0
+    },
+    "v21": {
+      "samples": 64,
+      "known_samples": 61,
+      "known_raw_correct": 61,
+      "accepted": 55,
+      "accepted_correct": 55,
+      "accepted_errors": 0,
+      "ambiguous_samples": 3,
+      "ambiguous_accepted": 0
+    }
+  },
+  "public_test": {
+    "v20": {
+      "samples": 189557,
+      "accuracy": 0.9808764457702637,
+      "macro_recall": 0.965912938117981,
+      "correct": 185932,
+      "accepted": 179742,
+      "accepted_correct": 179105,
+      "accepted_errors": 637,
+      "accepted_precision": 0.996456,
+      "coverage": 0.9482
+    },
+    "v21": {
+      "samples": 189557,
+      "accuracy": 0.9808764457702637,
+      "macro_recall": 0.965912938117981,
+      "correct": 185932,
+      "accepted": 180733,
+      "accepted_correct": 180138,
+      "accepted_errors": 595,
+      "accepted_precision": 0.996708,
+      "coverage": 0.9534
+    }
+  },
+  "limitations": [
+    "Repeated historical diagnostics informed adaptive development; this is not an independent test.",
+    "The public diagnostic is an adaptive benchmark, not independent certification.",
+    "The per-length top-2 margin floor is an operational cutoff, not a correctness guarantee.",
+    "One-sample coverage regression on the locked 64-message sample (55 vs 56 correct accepted, 0 accepted errors), caused by the margin floor.",
+    "Authored examples are correlated and assistant labels are not human-verified gold."
+  ],
+  "packaging": "Runtime-required state only; lexical terms also present in public training text. Source application texts and working records not distributed."
+}
