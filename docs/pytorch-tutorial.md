@@ -16,9 +16,9 @@ The first text has feature IDs `[12, 7, 12]`; the second has `[40, 3]`. `offsets
 ## 2. Embeddings are learned vectors
 
 ```python
-from language_detector import LanguageModel
+from language_detector import build_model
 
-model = LanguageModel(languages=3, buckets=64, embedding_dim=8)
+model = build_model(languages=3, buckets=64, embedding_dim=8, hidden_dim=16, arch="mlp")
 logits = model(ids, offsets)
 print(logits.shape)  # torch.Size([2, 3])
 ```

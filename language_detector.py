@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import re
+import threading
 import unicodedata
 from pathlib import Path
 
@@ -11,6 +12,8 @@ import torch
 from torch import nn
 
 BUCKETS = 8192
+_word_cache: dict[tuple[str, int], int] = {}
+_word_cache_lock = threading.Lock()
 
 
 def encode(
@@ -44,13 +47,19 @@ def encode(
     if word_features:
         words = re.findall(r"[^\W\d_]+(?:['’][^\W\d_]+)*", text, flags=re.UNICODE)
         for word in words:
-            index = (
-                int.from_bytes(
-                    hashlib.blake2b(("\x00W" + word).encode(), digest_size=8).digest(),
-                    "little",
-                )
-                % buckets
-            )
+            key = (word, buckets)
+            with _word_cache_lock:
+                if key not in _word_cache:
+                    if len(_word_cache) >= 10000:
+                        _word_cache.clear()
+                    _word_cache[key] = (
+                        int.from_bytes(
+                            hashlib.blake2b(("\x00W" + word).encode(), digest_size=8).digest(),
+                            "little",
+                        )
+                        % buckets
+                    )
+                index = _word_cache[key]
             features.extend([index] * 4)
     return features
 
@@ -64,6 +73,8 @@ def batch(texts: list[str], **encoding_options) -> tuple[torch.Tensor, torch.Ten
 
 
 class LanguageModel(nn.Module):
+    """Original linear architecture (arch=linear). Do not change."""
+
     def __init__(self, languages: int, buckets: int = BUCKETS, embedding_dim: int = 32):
         super().__init__()
         self.embedding = nn.EmbeddingBag(buckets, embedding_dim, mode="mean")
@@ -71,6 +82,38 @@ class LanguageModel(nn.Module):
 
     def forward(self, ids: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
         return self.classifier(self.embedding(ids, offsets))
+
+
+class LanguageModelMLP(nn.Module):
+    """Experimental hidden-layer architecture (arch=mlp)."""
+
+    def __init__(
+        self,
+        languages: int,
+        buckets: int = BUCKETS,
+        embedding_dim: int = 32,
+        hidden_dim: int = 128,
+    ):
+        super().__init__()
+        self.embedding = nn.EmbeddingBag(buckets, embedding_dim, mode="mean")
+        self.hidden = nn.Linear(embedding_dim, hidden_dim)
+        self.activation = nn.ReLU()
+        self.classifier = nn.Linear(hidden_dim, languages)
+
+    def forward(self, ids: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
+        x = self.embedding(ids, offsets)
+        x = self.activation(self.hidden(x))
+        return self.classifier(x)
+
+
+def build_model(
+    languages: int, buckets: int = BUCKETS, embedding_dim: int = 32, hidden_dim: int = 128, arch: str = "linear"
+) -> nn.Module:
+    if arch == "mlp":
+        return LanguageModelMLP(languages, buckets, embedding_dim, hidden_dim)
+    if arch == "linear":
+        return LanguageModel(languages, buckets, embedding_dim)
+    raise ValueError(f"Unknown architecture: {arch}")
 
 
 def train(data: Path, output: Path, epochs: int) -> None:
@@ -121,40 +164,63 @@ class LanguageDetector:
             "word_features": config.get("word_features", False),
             "preprocessing": config.get("preprocessing", "none"),
         }
-        self.model = LanguageModel(
+        self.model = build_model(
             len(self.languages),
             self.encoding_options["buckets"],
             config.get("embedding_dim", 32),
+            config.get("hidden_dim", 128),
+            config.get("arch", "linear"),
         )
         self.model.load_state_dict(checkpoint["state_dict"])
         self.model.eval()
         self.calibration = checkpoint.get("calibration", {})
+        self._cache: dict[str, str] = {}
+        self._cache_size = 1000
+        self._cache_lock = threading.Lock()
+
+    def _cache_get(self, text: str) -> str | None:
+        with self._cache_lock:
+            return self._cache.get(text)
+
+    def _cache_put(self, text: str, result: str) -> None:
+        with self._cache_lock:
+            if len(self._cache) >= self._cache_size:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[text] = result
 
     def predict(self, text: str) -> str:
+        cached = self._cache_get(text)
+        if cached is not None:
+            return cached
         with torch.inference_mode():
             index = (
                 self.model(*batch([text], **self.encoding_options)).argmax(dim=1).item()
             )
-        return self.languages[index]
+        result = self.languages[index]
+        self._cache_put(text, result)
+        return result
 
     def predict_many(self, texts: list[str], batch_size: int = 128) -> list[str]:
         """Predict a sequence of texts without reloading weights."""
         if batch_size < 1:
             raise ValueError("Batch size must be positive.")
-        results = []
-        with torch.inference_mode():
-            for start in range(0, len(texts), batch_size):
-                indices = (
-                    self.model(
-                        *batch(
-                            texts[start : start + batch_size], **self.encoding_options
-                        )
+        results: list[str | None] = [self._cache_get(text) for text in texts]
+        pending = [i for i, result in enumerate(results) if result is None]
+        if pending:
+            with torch.inference_mode():
+                for start in range(0, len(pending), batch_size):
+                    group = pending[start : start + batch_size]
+                    chunk = [texts[i] for i in group]
+                    indices = (
+                        self.model(*batch(chunk, **self.encoding_options))
+                        .argmax(dim=1)
+                        .tolist()
                     )
-                    .argmax(dim=1)
-                    .tolist()
-                )
-                results.extend(self.languages[index] for index in indices)
-        return results
+                    for pos, index in zip(group, indices):
+                        language = self.languages[index]
+                        results[pos] = language
+                        self._cache_put(texts[pos], language)
+        return [result for result in results if result is not None]
 
     def predict_details(self, text: str) -> dict:
         """Return optional confidence details and the und code when uncertain."""
