@@ -54,6 +54,7 @@ class EncodedDataset:
                             max_length=cap,
                             word_features=config.get("word_features", False),
                             preprocessing=config.get("preprocessing", "none"),
+                            word_repeat=config.get("word_repeat", 4),
                         ),
                         dtype=np.int32,
                     )

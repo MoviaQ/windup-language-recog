@@ -4,7 +4,7 @@
 
 ## What
 
-A CPU language classifier for 100 language codes. Hashes character n-grams and whole words into an EmbeddingBag, then uses a linear classifier.
+A CPU language classifier for 100 language codes. Hashes character n-grams and whole words into an EmbeddingBag, then combines MLP and linear-network logits in the v20 release.
 
 ## Quick start
 
@@ -44,7 +44,7 @@ docs/                     User guides, tutorial, provenance, evaluation
 assets/logo.png           Project logo
 ```
 
-Inference cleans text, hashes features, averages embeddings, and classifies. Training uses disk-backed feature caches and selects checkpoints by validation macro F1. Test data must never determine hyperparameters or checkpoint selection.
+Inference cleans text, hashes features, averages embeddings in two networks, combines logits, and optionally applies the stored acceptance policy. Training uses disk-backed feature caches and selects checkpoints by validation macro F1. Test data must never determine hyperparameters or checkpoint selection.
 
 ## Key files
 

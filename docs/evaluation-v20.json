@@ -1,0 +1,121 @@
+{
+  "model_version": "v20",
+  "model_sha256": "61eca1817f44929b308c9ee1379781e46da33f83eb97e66faa78fa08ce73abac",
+  "model_bytes": 67869297,
+  "language_count": 100,
+  "historical_application_diagnostics": {
+    "external_200": {
+      "v4": {
+        "samples": 200,
+        "correct": 194,
+        "accepted": 170,
+        "accepted_correct": 170,
+        "accepted_errors": 0
+      },
+      "v7": {
+        "samples": 200,
+        "correct": 195,
+        "accepted": 169,
+        "accepted_correct": 169,
+        "accepted_errors": 0
+      },
+      "v20": {
+        "samples": 200,
+        "correct": 198,
+        "accepted": 183,
+        "accepted_correct": 183,
+        "accepted_errors": 0
+      }
+    },
+    "external_198": {
+      "v4": {
+        "samples": 198,
+        "correct": 185,
+        "accepted": 174,
+        "accepted_correct": 172,
+        "accepted_errors": 2
+      },
+      "v7": {
+        "samples": 198,
+        "correct": 186,
+        "accepted": 175,
+        "accepted_correct": 173,
+        "accepted_errors": 2
+      },
+      "v20": {
+        "samples": 198,
+        "correct": 186,
+        "accepted": 176,
+        "accepted_correct": 174,
+        "accepted_errors": 2
+      }
+    }
+  },
+  "final_64_diagnostic": {
+    "v4": {
+      "samples": 64,
+      "known_samples": 61,
+      "known_raw_correct": 60,
+      "accepted": 52,
+      "accepted_correct": 52,
+      "accepted_errors": 0,
+      "ambiguous_samples": 3,
+      "ambiguous_accepted": 0
+    },
+    "v7": {
+      "samples": 64,
+      "known_samples": 61,
+      "known_raw_correct": 61,
+      "accepted": 53,
+      "accepted_correct": 53,
+      "accepted_errors": 0,
+      "ambiguous_samples": 3,
+      "ambiguous_accepted": 0
+    },
+    "v20": {
+      "samples": 64,
+      "known_samples": 61,
+      "known_raw_correct": 61,
+      "accepted": 56,
+      "accepted_correct": 56,
+      "accepted_errors": 0,
+      "ambiguous_samples": 3,
+      "ambiguous_accepted": 0
+    }
+  },
+  "public_test": {
+    "v4": {
+      "samples": 189557,
+      "accuracy": 0.9811402559280396,
+      "macro_recall": 0.9654080867767334,
+      "correct": 185982,
+      "accepted": 178232,
+      "accepted_correct": 177728,
+      "accepted_errors": 504
+    },
+    "v7": {
+      "samples": 189557,
+      "accuracy": 0.9809924960136414,
+      "macro_recall": 0.9654247760772705,
+      "correct": 185954,
+      "accepted": 178172,
+      "accepted_correct": 177657,
+      "accepted_errors": 515
+    },
+    "v20": {
+      "samples": 189557,
+      "accuracy": 0.9808764457702637,
+      "macro_recall": 0.965912938117981,
+      "correct": 185932,
+      "accepted": 179742,
+      "accepted_correct": 179105,
+      "accepted_errors": 637
+    }
+  },
+  "limitations": [
+    "Repeated historical diagnostics informed adaptive development; not an independent test.",
+    "Authored examples are correlated and assistant labels are not human-verified gold.",
+    "More accepted general-text errors than v7; no v20 latency benchmark."
+  ],
+  "packaging": "Runtime-required state only; lexical terms also present in public training text. Source application texts and working records not distributed."
+}

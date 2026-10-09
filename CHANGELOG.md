@@ -1,5 +1,12 @@
 # Changelog
 
+## v20 checkpoint — 2026-10-09
+
+- Replace bundled weights with a calibrated MLP/linear ensemble for all 100 languages.
+- Add model-consensus, language/length, and case-sensitive single-word acceptance rules, while preserving raw prediction APIs and older checkpoints.
+- Add CLI `--allow-uncertain` and portable policy regression tests.
+- Document higher acceptance on application diagnostics, the general-text error tradeoff, and the two-network inference cost.
+
 ## 0.1.0 — 2026-10-07
 
 Initial public release.
