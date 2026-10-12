@@ -1,0 +1,64 @@
+{
+  "name": "authored-tickets-84",
+  "schema_version": 1,
+  "license": "MIT",
+  "source": {
+    "authored_by_ai": true,
+    "human_verified": false,
+    "citation": "Synthetic support tickets authored for this repository; released under MIT with the software.",
+    "original_sha256": "1c2f975bb4eb677ddb23b644e4e62c9bc8c2d2378a03e767e23ef4ba5daa124b",
+    "provenance_note": "No real user, client, or ticket data. No third-party corpus text. Hostnames and addresses are fictitious and restricted to example.invalid; ids are fictional."
+  },
+  "file": {
+    "path": "tests/fixtures/authored_tickets.jsonl",
+    "format": "jsonl, UTF-8, LF line endings, trailing newline",
+    "bytes": 38454,
+    "rows": 84,
+    "sha256": "1c2f975bb4eb677ddb23b644e4e62c9bc8c2d2378a03e767e23ef4ba5daa124b"
+  },
+  "fields": [
+    "id", "family_id", "title", "description", "language",
+    "category", "note", "label_basis", "authored_by_ai", "human_verified"
+  ],
+  "counts": {
+    "total": 84,
+    "by_language": {
+      "cs": 9, "de": 24, "en": 18, "es": 1, "fr": 1, "it": 1,
+      "nl": 1, "pl": 14, "pt": 1, "sv": 1, "und": 13
+    },
+    "by_category": {
+      "code_fenced": 8, "error_quote": 5, "mixed": 8, "single": 63
+    },
+    "single_language_total": 71,
+    "und_total": 13
+  },
+  "gold_notes": {
+    "und_is_abstention_target": "The 13 'und' rows are the desired-abstention group (8 mixed + 5 error_quote). 'und' is not one of the 100 project language codes.",
+    "gold_frozen_before_use": "Gold labels are author intent frozen before any model ran; they are never edited to match a prediction."
+  },
+  "overlap": {
+    "repeated_titles": {
+      "count": 2,
+      "ids": ["holdout-002", "holdout-057"],
+      "kind": "title_only",
+      "note": "After the original dataset freeze, an audit found two generic request titles coinciding with the development pool after case/accent normalisation; bodies and selected model inputs remain distinct."
+    },
+    "actual_model_input_overlap": {
+      "count": 0,
+      "basis": "normalised chosen model input (extract_ticket_text) compared against the excluded development pool",
+      "note": "Bodies and therefore the real classifier input are disjoint; only the bare titles coincide."
+    },
+    "development_pool_not_included": {
+      "included": false,
+      "correlated_families": 53,
+      "shared_family_ids": 0,
+      "note": "The development pool holds 53 distinct scenario families and is deliberately not vendored into this fixture; no family id is shared."
+    }
+  },
+  "benchmark": {
+    "purpose": "Reproduce a frozen guard-vs-fastText policy definition once on the committed 84 rows.",
+    "not_a_benchmark_claim": "Small n; raw counts only. AI-authored and human UNVERIFIED, so results are directional evidence, never production confidence.",
+    "clean_cohort_ids_excluded": ["holdout-002", "holdout-057"],
+    "clean_cohort_rows": 82
+  }
+}

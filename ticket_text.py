@@ -22,8 +22,14 @@ def normalize_ticket_text(text: str) -> str:
     return " ".join(text.split())
 
 
-def extract_ticket_text(title: str, description: str = "") -> str:
-    """Prefer description content after removing system and email headers."""
+def select_request_source(description: str = "") -> str:
+    """Raw envelope-stripped request body, newlines preserved.
+
+    Single shared implementation of the structural stripping: service
+    headers, system banner, leading From/Von envelope, quoted replies and
+    sign-off lines. No normalization, no title fallback, no length cap —
+    callers normalize and choose afterwards. Empty input yields "".
+    """
     body = ftfy.fix_text(description or "")
     body = re.sub(
         r"^\s*Following Service Request.*?Users Comment:\s*",
@@ -58,11 +64,20 @@ def extract_ticket_text(title: str, description: str = "") -> str:
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
-    body = normalize_ticket_text(body)
+    return body
+
+
+def has_request_substance(cleaned: str) -> bool:
+    """True when cleaned text carries the request (body beats title)."""
+    return sum(word.isalpha() for word in cleaned.split()) >= 3 or sum(
+        char.isalpha() for char in cleaned
+    ) >= 12
+
+
+def extract_ticket_text(title: str, description: str = "") -> str:
+    """Prefer description content after removing system and email headers."""
+    body = normalize_ticket_text(select_request_source(description))
     title = normalize_ticket_text(title)
-    if (
-        sum(word.isalpha() for word in body.split()) >= 3
-        or sum(char.isalpha() for char in body) >= 12
-    ):
+    if has_request_substance(body):
         return body[:2000]
     return title[:2000]
