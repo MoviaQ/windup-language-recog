@@ -1,6 +1,6 @@
 # Model weights license
 
-The released `model.pt` is the v20 ensemble adapted from the public WiLI-2018 and MASSIVE 1.1 base through support-domain fine-tuning. It is not covered by the software's MIT license.
+The released `model.pt` is the v21 ensemble adapted from the public WiLI-2018 and MASSIVE 1.1 base through support-domain fine-tuning. v21 keeps v20's weights with an updated acceptance policy. It is not covered by the software's MIT license.
 
 To the extent copyright or similar rights apply to the model weight contributions made by this project, Contributors license those contributions under **Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)**.
 
