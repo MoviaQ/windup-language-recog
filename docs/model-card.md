@@ -2,7 +2,7 @@
 
 ## Intended use
 
-A local CPU classifier for short application messages and exploratory language routing. It retains all 100 supported codes, including `ja` for Japanese. It predicts one language, not spans or translations. Standard `predict` and `predict_many` always choose a supported code. `predict_details` and `predict_ticket(..., allow_uncertain=True)` can abstain with `und`.
+A local CPU classifier for short application messages and exploratory language routing. It retains all 100 supported codes, including `ja` for Japanese. It predicts one language, not spans or translations. Standard `predict` and `predict_many` always choose a supported code. `predict_details` and `predict_ticket(..., allow_uncertain=True)` can abstain with `und`. The optional `predict_guarded_ticket(title, description)` adds one sentence-level veto for support tickets and can also abstain; see [ticket guard](ticket-guard.md). It uses the same weights and calibration, only withholds more often, and its small directional evaluation is not a production guarantee.
 
 ## Architecture and inference
 

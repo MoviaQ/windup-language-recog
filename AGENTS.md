@@ -19,7 +19,7 @@ A CPU language classifier for 100 language codes. Hashes character n-grams and w
 ```bash
 # Runtime dependencies and syntax checks
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m compileall -q language_detector.py ticket_text.py train_model.py prepare_public_data.py dataset_utils.py evaluate_public.py
+.venv/bin/python -m compileall -q language_detector.py ticket_text.py ticket_guard.py train_model.py prepare_public_data.py dataset_utils.py evaluate_public.py
 # Public corpus and training; downloads data, then performs a substantial CPU job
 .venv/bin/python -m pip install -r requirements-training.txt
 .venv/bin/python prepare_public_data.py
@@ -34,6 +34,7 @@ A CPU language classifier for 100 language codes. Hashes character n-grams and w
 ```text
 language_detector.py      Encoding, model, inference API, demo trainer, CLI
 ticket_text.py            Local text cleanup and description extraction
+ticket_guard.py           Optional frozen sentence veto for support tickets
 train_model.py            Cached features, public validation, checkpoint selection
 prepare_public_data.py    Public downloads, split handling, short-text preparation
 evaluate_public.py        Validation temperature fit, public evaluation, latency
