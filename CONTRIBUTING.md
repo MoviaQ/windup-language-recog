@@ -18,6 +18,18 @@ Create a branch with a descriptive name, keep changes focused, and explain the u
 
 Use readable Python, descriptive names, type hints where they clarify interfaces, and small functions. Follow existing formatting. Preserve `LanguageDetector` API behavior and compatibility with checkpoint configuration defaults. Do not commit source archives, prepared corpora, feature caches, credentials, or machine-specific files. Avoid replacing the release checkpoint casually: a new model needs a documented provenance and benchmark.
 
+## Main branch protection
+
+The `main` branch is protected by active GitHub rulesets:
+
+- All changes must go through a pull request; direct pushes are blocked, including for the owner.
+- Both GitHub Actions checks, `test (3.10)` and `test (3.12)`, must pass before merging. These checks cannot be bypassed by the owner.
+- Only repository administrators can merge pull requests. Currently, `MoviaQ` is the sole administrator; granting another account administrator access would also grant it merge permission.
+- Approval from another reviewer is not required.
+- Force pushes and deletion of `main` are blocked.
+
+These rules are enforced in GitHub, not by this document. Administrators can inspect them in the [repository ruleset settings](https://github.com/MoviaQ/windup-language-recog/settings/rules).
+
 ## Issues
 
 Include expected and actual behavior, Python/PyTorch versions, operating system, the API or command used, and a minimal synthetic text that reproduces the issue. Do not include personal information or confidential input text. Feature requests should explain a concrete use case and the desired behavior.
