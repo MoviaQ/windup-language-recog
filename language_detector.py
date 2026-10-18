@@ -298,22 +298,34 @@ class LanguageDetector:
             confidence, index = probabilities.max(dim=1)
             confidence = confidence.item()
             best = self.languages[index.item()]
+            if probabilities.size(1) >= 2:
+                top2 = probabilities.topk(2, dim=1).values
+                margin = (top2[0, 0] - top2[0, 1]).item()
+            else:
+                margin = confidence
         threshold = self.calibration.get("min_confidence")
         threshold = self.calibration.get("min_confidence_by_language", {}).get(
             best, threshold
         )
         ambiguous = False
+        length_group = None
         contextual = self.calibration.get("min_confidence_by_language_and_length", {})
-        if contextual or self._ambiguous_single_words or self._single_word_language:
+        margin_floors = self.calibration.get("min_margin_by_length", {})
+        if contextual or self._ambiguous_single_words or self._single_word_language or margin_floors:
             length_group, single_word = evidence_profile(text, case_sensitive=self.calibration.get("word_evidence_case_sensitive", False))
             lexical_language = self._single_word_language.get(single_word)
             ambiguous = single_word in self._ambiguous_single_words or (lexical_language is not None and lexical_language != best)
             threshold = contextual.get(best, {}).get(length_group, threshold)
-        uncertain = ambiguous or not agree or (threshold is not None and confidence < threshold)
+        margin_ok = True
+        if length_group is not None and margin_floors:
+            floor = margin_floors.get(length_group)
+            margin_ok = floor is None or margin >= floor
+        uncertain = ambiguous or not agree or not margin_ok or (threshold is not None and confidence < threshold)
         return {
             "language": "und" if uncertain else best,
             "best_language": best,
             "confidence": confidence,
+            "margin": margin,
             "uncertain": uncertain,
             "calibrated": bool(self.calibration),
         }
