@@ -24,7 +24,7 @@ Repeated historical diagnostics and analysis of their errors informed further de
 
 Very short text, names, identifiers, code, transliteration, unsupported languages, and closely related or mixed languages remain difficult. Cleanup can remove useful evidence. Abstention does not reliably identify every unsupported input. Always evaluate accepted accuracy together with coverage.
 
-The v21 diagnostics show more accepted correct application responses than v7, with the same or fewer accepted errors on the reported application sets. On 189,557 public test texts, v21 accepts more correct responses and fewer errors than v20 (595 versus 637; v7 had 515), improving selective precision and coverage over v20. A per-length margin floor cost one accepted correct response on the locked 64-message sample, with no accepted errors. This is not universal superiority or a production accuracy guarantee. Test reuse, correlated authored examples, and unverified labels limit the conclusions.
+The v21 diagnostics show more accepted correct application responses than v7 on the historical application sets, with the same or fewer accepted errors there; on the authored diagnostics v21 gains 4 correct accepted responses while accepted errors rise from v7's 3 to 8. On 189,557 public test texts, v21 accepts more correct responses and fewer errors than v20 (595 versus 637; v7 had 515), improving selective precision and coverage over v20. A per-length margin floor cost one accepted correct response on the locked 64-message sample, with no accepted errors. This is not universal superiority or a production accuracy guarantee. Test reuse, correlated authored examples, and unverified labels limit the conclusions.
 
 ## Privacy and licenses
 

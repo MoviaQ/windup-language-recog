@@ -57,6 +57,25 @@ class V21Tests(unittest.TestCase):
             d.predict_details('This is a complete request')['language'], 'und'
         )
 
+    def test_single_language_checkpoint_does_not_crash(self):
+        model = build_model(1, 32, 4, hidden_dim=8, arch='linear')
+        c = dict(
+            languages=['en'],
+            config=dict(buckets=32, embedding_dim=4, hidden_dim=8, arch='linear'),
+            state_dict=model.state_dict(),
+            calibration=dict(temperature=1., min_confidence=.5),
+        )
+        details = self.load(c).predict_details('Hello')
+        self.assertEqual(details['language'], 'en')
+        self.assertAlmostEqual(details['margin'], details['confidence'])
+
+    def test_checkpoint_without_calibration(self):
+        c = checkpoint()
+        del c['calibration']
+        details = self.load(c).predict_details('Hello')
+        self.assertIn('margin', details)
+        self.assertEqual(details['language'], details['best_language'])
+
     def test_backward_compatibility_without_margin_keys(self):
         baseline = self.load(checkpoint())
         self.assertNotIn('min_margin_by_length', baseline.calibration)
