@@ -12,11 +12,11 @@ A PyTorch mean `EmbeddingBag` with 131,072 buckets and 64 dimensions feeds a 100
 
 ## Training provenance
 
-The released checkpoint is separately initialized and trained exclusively from checksum-verified raw **WiLI-2018** and **MASSIVE 1.1** archives. WiLI supplies Wikipedia-derived passages; MASSIVE supplies multilingual assistant utterances. Long inputs are converted into short excerpts, and normalized duplicates/conflicting labels are excluded. Project-authored synthetic examples are reserved for illustrative evaluation and are excluded from training.
+The bundled **v4** checkpoint adapts the original public-data model trained from checksum-verified WiLI-2018 and MASSIVE 1.1 archives. The base received support-domain fine-tuning with public replay and authored synthetic support requests. Assistant-reviewed labels are not independently verified human gold labels. Held-out synthetic diagnostics are separate from training augmentation.
 
-WiLI source training data is divided into train and validation by language. MASSIVE's source train/dev/test assignments are retained before exclusions. The release uses Adam, class-frequency weighting, 5% feature dropout, and a maximum of 12 epochs. Validation macro F1 chooses the checkpoint; test performance does not select epochs.
+Adaptation uses seed 3187 and Adam with learning rate 0.0003. Epoch 8 of 12 was selected using ticket-validation accuracy plus 0.2 times public-validation macro recall, with a public-validation accuracy preservation constraint. Temperature 1.349526 was fitted on public validation; the confidence threshold 0.929371 was selected on 58 ticket-validation examples, accepting 43 with no observed errors. Test labels did not fit the threshold or choose the epoch.
 
-Preparation produces a reproducibility manifest containing source checksums, language codes, seeds, and counts. See [training instructions](training.md), [benchmark notes](benchmark.md), and [third-party notices](../THIRD_PARTY_NOTICES.md) for commands, measured results, and attribution.
+The complete adaptation records and scripts are not distributed. The public training commands reproduce the base-model workflow, not the bundled v4 weights. See [training instructions](training.md), [benchmark notes](benchmark.md), and [third-party notices](../THIRD_PARTY_NOTICES.md).
 
 ## Evaluation interpretation
 
@@ -28,7 +28,7 @@ Exact normalized split separation is checked under the project's key function. S
 
 Very short text, names, abbreviations, technical identifiers, closely related languages, transliteration, and mixed-language messages can be ambiguous. The detector always chooses a supported language in its standard API, including for unsupported languages. Cleanup can remove useful evidence. One output code cannot describe every language in a multilingual input.
 
-Confidence is a model score. The release applies validation-fitted temperature scaling with a fixed 0.9 operational cutoff; this does not claim 99% correctness. Optional calibrated thresholds can abstain with `und`, but neither calibration nor abstention guarantees correctness or identifies all unsupported input. Assess accepted accuracy and coverage together on new labeled data before adopting a threshold.
+Confidence is a model score. The v4 release applies public-validation temperature scaling with a ticket-validation cutoff of 0.929371; this does not claim 99% correctness. Optional calibrated thresholds can abstain with `und`, but neither calibration nor abstention guarantees correctness or identifies all unsupported input. Assess accepted accuracy and coverage together on new labeled data before adopting a threshold.
 
 ## Privacy and licensing
 

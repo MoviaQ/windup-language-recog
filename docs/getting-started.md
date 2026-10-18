@@ -55,7 +55,7 @@ code_or_und = model.predict_ticket("Access problem", "Please help me sign in.", 
 
 Results contain `language`, `best_language`, `confidence`, `uncertain`, and `calibrated`. Confidence is the largest softmax score, optionally temperature-scaled. With no checkpoint calibration, `calibrated` is false and the method always returns its best supported code.
 
-The release checkpoint uses validation-fitted temperature scaling and a fixed 0.9 operational cutoff. This threshold is not a correctness guarantee.
+The v4 release checkpoint uses public-validation temperature scaling and a 0.929371 cutoff selected on 58 ticket-validation examples. This threshold is not a correctness guarantee.
 
 A separately calibrated checkpoint can store `temperature` and `min_confidence`; then `predict_details` returns `und` below that threshold. `predict_ticket(..., allow_uncertain=True)` requires calibration and can return `und` for empty cleaned text. This reduces accepted predictions; it does not guarantee an accuracy level or reliably identify unsupported languages. Fit calibration on validation data, and evaluate accuracy together with acceptance coverage on held-out data.
 

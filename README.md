@@ -11,6 +11,8 @@
 
 Wind-Up recognizes the language of short messages and longer text using hashed character fragments, whole words, and a compact neural network. Load the included weights once and run inference locally on your CPU. No API key or remote inference service is required.
 
+The bundled v4 weights are adapted for support messages. The full adaptation workflow is not distributed; see the [model card](docs/model-card.md) and [v4 evaluation](docs/benchmark.md) for provenance, results, and limits.
+
 The implementation is deliberately approachable: useful as a language detector and as a practical introduction to PyTorch.
 
 ## Quick start
@@ -46,7 +48,7 @@ print(detector.predict_details("Non riesco ad accedere al mio account."))
 
 The model returns short language codes, such as `pl`, `en`, `de`, `it`, and `ja` for Japanese. All 100 supported codes are listed in [data/languages.json](data/languages.json); the list is a coverage choice, not a ranking of the world's most popular languages.
 
-`predict` and `predict_many` always choose one supported language. `predict_ticket` cleans a title and description, preferring substantive description text. `predict_details` adds a model confidence score and calibration status. The release uses validation temperature scaling and a fixed 0.9 confidence cutoff. An explicitly calibrated checkpoint can return `und` when confidence falls below its stored threshold; `predict_ticket(..., allow_uncertain=True)` requires such a checkpoint. Confidence is not a guarantee of correctness, and uncertainty mode is not an out-of-distribution detector.
+`predict` and `predict_many` always choose one supported language. `predict_ticket` cleans a title and description, preferring substantive description text. `predict_details` adds a model confidence score and calibration status. The v4 release uses public-validation temperature scaling and a 0.929371 confidence cutoff selected on 58 ticket-validation examples. An explicitly calibrated checkpoint can return `und` when confidence falls below its stored threshold; `predict_ticket(..., allow_uncertain=True)` requires such a checkpoint. Confidence is not a guarantee of correctness, and uncertainty mode is not an out-of-distribution detector.
 
 ## How it works
 
@@ -61,7 +63,7 @@ The release uses 131,072 hash buckets, 64-dimensional embeddings, character n-gr
 
 Short text can be ambiguous: shared words, names, code snippets, mixed languages, and closely related languages may not contain enough evidence for a reliable label. The model predicts one language per input and does not identify language spans. Performance on public corpora does not establish accuracy for your application.
 
-The release is trained from public WiLI-2018 and MASSIVE 1.1 data. Its [model card](docs/model-card.md) explains provenance and evaluation limits. See [benchmark notes](docs/benchmark.md) for measured results and methodology; latency depends on hardware, text length, and thread settings.
+The release adapts a WiLI-2018 and MASSIVE 1.1 base for support messages. Its [model card](docs/model-card.md) explains provenance and evaluation limits. See [benchmark notes](docs/benchmark.md) for measured results and methodology; latency depends on hardware, text length, and thread settings.
 
 ## Documentation
 
