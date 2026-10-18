@@ -48,7 +48,7 @@ print(detector.predict_details("Non riesco ad accedere al mio account."))
 
 The model returns short language codes, such as `pl`, `en`, `de`, `it`, and `ja` for Japanese. All 100 supported codes are listed in [data/languages.json](data/languages.json); the list is a coverage choice, not a ranking of the world's most popular languages.
 
-`predict` and `predict_many` always choose one supported language. `predict_ticket` cleans a title and description, preferring substantive description text. `predict_details` adds a model confidence score and calibration status. The v21 release keeps v20's calibrated logits from an MLP and a linear network. Uncertainty mode requires agreement and applies language/length cutoffs, a per-length top-2 margin floor, plus single-word evidence rules. An explicitly calibrated checkpoint can return `und` when its stored acceptance policy rejects an input; `predict_ticket(..., allow_uncertain=True)` requires such a checkpoint. Confidence is not a guarantee of correctness, and uncertainty mode is not an out-of-distribution detector.
+`predict` and `predict_many` always choose one supported language. `predict_ticket` cleans a title and description, preferring substantive description text. `predict_details` adds a model confidence score and calibration status. `predict_guarded_ticket(title, description)` is an opt-in variant for support tickets: it can return `und` when one sentence confidently disagrees with the whole-ticket vote. See [ticket guard](docs/ticket-guard.md) for behavior, limits, and the small directional evaluation. The v21 release keeps v20's calibrated logits from an MLP and a linear network. Uncertainty mode requires agreement and applies language/length cutoffs, a per-length top-2 margin floor, plus single-word evidence rules. An explicitly calibrated checkpoint can return `und` when its stored acceptance policy rejects an input; `predict_ticket(..., allow_uncertain=True)` requires such a checkpoint. Confidence is not a guarantee of correctness, and uncertainty mode is not an out-of-distribution detector.
 
 ## How it works
 
@@ -69,6 +69,7 @@ The release adapts a WiLI-2018 and MASSIVE 1.1 base for support messages. Its [m
 ## Documentation
 
 - [Getting started and API behavior](docs/getting-started.md)
+- [Ticket guard (optional support-ticket veto)](docs/ticket-guard.md)
 - [Architecture and preprocessing](docs/architecture.md)
 - [Learn PyTorch with this model](docs/pytorch-tutorial.md)
 - [Reproduce public-data training](docs/training.md)

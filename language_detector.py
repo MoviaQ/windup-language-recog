@@ -330,6 +330,48 @@ class LanguageDetector:
             "calibrated": bool(self.calibration),
         }
 
+    def predict_guarded_ticket(
+        self, title: str, description: str = "", *, cutoff: float = 0.65
+    ) -> str:
+        """Optional frozen ticket guard (opt-in only).
+
+        Same input selection as the whole-ticket text (title/description
+        via prepare_ticket), whole-ticket vote through predict_details
+        acceptance, then one foreign-confident sentence veto at cutoff.
+        No extra sentence-level heuristics are applied. It can abstain with
+        und when a confident foreign sentence is detected; that is not
+        reliable detection of all mixtures (a mixed ticket can still
+        answer when no segment clears the cutoff). Works with any
+        checkpoint (calibrated or raw); calibration, when present, still
+        governs the whole-ticket vote. Letterless input returns und;
+        other model errors propagate. Never touches fastText.
+        """
+        from ticket_guard import (
+            RawPrediction,
+            TicketPolicy,
+            guarded_language,
+            prepare_ticket,
+        )
+
+        TicketPolicy(name="ticket-guard", sentence_cutoff=cutoff)
+        prepared = prepare_ticket(title or "", description or "")
+        if not any(char.isalpha() for char in prepared.text):
+            return "und"
+        whole = self.predict_details(prepared.text)["language"]
+        if whole == "und":
+            return "und"
+
+        def _raw(sentence: str) -> RawPrediction:
+            details = self.predict_details(sentence)
+            return RawPrediction(
+                best=str(details.get("best_language", "und")),
+                confidence=float(details.get("confidence", 0.0)),
+                margin=float(details.get("margin", 0.0)),
+                agreement=True,
+            )
+
+        return guarded_language(whole, prepared.sentences, _raw, float(cutoff))
+
     def predict_ticket(
         self, title: str, description: str = "", *, allow_uncertain: bool = False
     ) -> str:

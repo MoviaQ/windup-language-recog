@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (software only)
+
+- Add opt-in `predict_guarded_ticket(title, description, cutoff=0.65)`: a frozen sentence-level veto for support tickets that can return `und` on confident foreign-sentence evidence. Default APIs, CLI, weights, and checkpoints are unchanged; no new training.
+- Add runtime `ticket_guard.py` (shared input selection, 2,000-character prefix, >=3-word sentence filter) plus mocked and real-model regression tests.
+- Add the 84-row AI-authored, human-unverified fixture (`tests/fixtures/authored_tickets.jsonl`, MIT) with an offline non-fitting benchmark (`tools/benchmark_ticket_guard.py`); confirmed guard 70 C / 0 E vs fastText-0.65 68 C / 0 E, exact-matched tie 68/68 on the conservative 82 rows. See `docs/ticket-guard.md`. Benchmark-only `requirements-benchmark.txt` pins the fastText wheel; runtime stays torch + ftfy.
+
 ## v21 checkpoint — 2026-10-10
 
 - Acceptance-policy-only release: the raw neural weights, ensemble members, weights, and temperatures are unchanged from v20.

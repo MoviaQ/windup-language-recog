@@ -1,0 +1,14 @@
+# OPTIONAL dependencies for tools/benchmark_ticket_guard.py only.
+# The core runtime (requirements.txt) never needs these: the guard, the API
+# and the shipped test suite stay torch + ftfy only. Install only when you
+# want to run the fastText comparison locally against a .bin you already have.
+#
+#   .venv/bin/python -m pip install -r requirements-benchmark.txt
+#
+# fasttext-wheel 0.9.2 ships prebuilt wheels and is the version this tool was
+# exercised with. NumPy is capped below 3 because fasttext-wheel 0.9.2 is not
+# NumPy-2-clean on every call path: this tool deliberately uses the LIST form
+# model.predict([text], k=1), which works, while the single-string form
+# model.predict(text, k=1) raises under NumPy >= 2.
+fasttext-wheel==0.9.2
+numpy>=1.26,<3

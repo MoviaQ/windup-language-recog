@@ -18,6 +18,10 @@ Hashed features → EmbeddingBag → ReLU MLP → calibrated logits ─┐
 
 Hashing bounds neural-network size. The optional standalone-word policy also uses evidence tables embedded in the checkpoint. Collisions share parameters; they are a deliberate memory/accuracy tradeoff. Mean pooling is cheap but discards feature order beyond that encoded inside each n-gram.
 
+## Optional ticket guard
+
+`ticket_guard.py` reuses the same request source the whole-ticket text sees (`ticket_text.select_request_source`, then the same description-else-title choice), so guard and whole vote can never disagree about which field they read. The source is split into lines with newlines preserved; each line is cleaned exactly like the whole input, and only the first 2,000 normalized characters may supply sentences (a straddling line is clipped, later lines excluded; if per-line mapping ever drifts from the whole text, segmentation falls back to the cleaned whole text). Sentences need at least 3 Unicode letter words; digit/underscore tokens never count. `predict_guarded_ticket` scores the whole text through `predict_details` acceptance, then each sentence raw; one foreign sentence at or above the cutoff (default 0.65) withholds the answer as `und`. No fastText, no extra weights, no training.
+
 ## Training
 
 `prepare_public_data.py` downloads checksum-verified public archives, maps source language IDs, retains source partitions, excludes normalized duplicates/conflicts, and builds short examples. Synthetic evaluation examples are reserved from the corpus. The normalization key considers up to 384 characters; this prevents exact normalized overlap under that rule, not every semantic paraphrase or source-level overlap.
