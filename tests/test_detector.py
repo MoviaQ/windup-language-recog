@@ -7,7 +7,7 @@ from pathlib import Path
 
 import torch
 
-from language_detector import LanguageDetector, LanguageModel, encode
+from language_detector import LanguageDetector, build_model, encode
 from ticket_text import extract_ticket_text, normalize_ticket_text
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +33,7 @@ class DetectorTests(unittest.TestCase):
     def test_checkpoint_batch_and_confidence_contract(self):
         torch.manual_seed(7)
         with tempfile.TemporaryDirectory() as directory:
-            model = LanguageModel(2)
+            model = build_model(2)
             path = Path(directory) / "model.pt"
             checkpoint = {
                 "state_dict": model.state_dict(),

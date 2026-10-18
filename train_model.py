@@ -13,7 +13,7 @@ import torch
 from torch import nn
 
 from dataset_utils import read_csv
-from language_detector import LanguageModel, encode
+from language_detector import build_model, encode
 
 ROOT = Path(__file__).resolve().parent
 
@@ -80,7 +80,7 @@ class EncodedDataset:
 
 
 def score(
-    model: LanguageModel, data: EncodedDataset, batch_size: int, classes: int
+    model: nn.Module, data: EncodedDataset, batch_size: int, classes: int
 ) -> dict:
     model.eval()
     confusion = torch.zeros((classes, classes), dtype=torch.long)
@@ -130,6 +130,8 @@ def main() -> None:
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--buckets", type=int, default=65536)
     parser.add_argument("--embedding-dim", type=int, default=64)
+    parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--arch", choices=("linear", "mlp"), default="linear")
     parser.add_argument("--train-length", type=int, default=384)
     parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--seed", type=int, default=42)
@@ -176,6 +178,8 @@ def main() -> None:
     config = {
         "buckets": args.buckets,
         "embedding_dim": args.embedding_dim,
+        "hidden_dim": args.hidden_dim,
+        "arch": args.arch,
         "ngrams": list(range(1, args.ngram_max + 1)),
         "max_length": 2000,
         "word_features": args.word_features,
@@ -199,7 +203,7 @@ def main() -> None:
     print(f"Languages: {len(languages)}; preparing feature caches...", flush=True)
     training = EncodedDataset(train_files, languages, config, args.train_length)
     validation = EncodedDataset(valid_files, languages, config, args.train_length)
-    model = LanguageModel(len(languages), args.buckets, args.embedding_dim)
+    model = build_model(len(languages), args.buckets, args.embedding_dim, args.hidden_dim, args.arch)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # Inverse-square-root frequency weights reduce large-language dominance.
     weights = torch.tensor(
