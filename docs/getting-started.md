@@ -55,12 +55,18 @@ code_or_und = model.predict_ticket("Access problem", "Please help me sign in.", 
 
 Results contain `language`, `best_language`, `confidence`, `uncertain`, and `calibrated`. Confidence is the largest softmax score, optionally temperature-scaled. With no checkpoint calibration, `calibrated` is false and the method always returns its best supported code.
 
-The v4 release checkpoint uses public-validation temperature scaling and a 0.929371 cutoff selected on 58 ticket-validation examples. This threshold is not a correctness guarantee.
+The v20 checkpoint combines calibrated MLP and linear-network logits. Its acceptance policy requires model agreement and uses cutoffs by language and text length, plus case-sensitive single-word evidence. It can return `und` even when the softmax score is high. These rules are not a correctness guarantee.
 
-A separately calibrated checkpoint can store `temperature` and `min_confidence`; then `predict_details` returns `und` below that threshold. `predict_ticket(..., allow_uncertain=True)` requires calibration and can return `und` for empty cleaned text. This reduces accepted predictions; it does not guarantee an accuracy level or reliably identify unsupported languages. Fit calibration on validation data, and evaluate accuracy together with acceptance coverage on held-out data.
+Older calibrated checkpoints storing only `temperature` and `min_confidence` still use their single threshold. `predict_ticket(..., allow_uncertain=True)` requires calibration and can return `und` for empty cleaned text. This reduces accepted predictions; it does not guarantee an accuracy level or reliably identify unsupported languages. Fit calibration on validation data, and evaluate accuracy together with acceptance coverage on held-out data.
 
 ## Errors and performance
 
 Plain `predict` raises `ValueError` when cleaned input has no letters. Batch prediction aborts if an input is invalid; filter invalid inputs first when handling heterogeneous batches. An empty batch returns an empty list, and batch size must be positive.
 
 For short CPU requests you can benchmark `torch.set_num_threads(1)` before constructing the detector. PyTorch's default thread count can add overhead. This setting affects the process globally; choose it for your workload rather than treating a measured latency as a universal guarantee.
+
+CLI uncertainty mode uses the same policy as the Python ticket API:
+
+```bash
+.venv/bin/python language_detector.py predict "My VPN stopped working today. Please reinstall it." --allow-uncertain
+```

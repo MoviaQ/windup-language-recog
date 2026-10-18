@@ -1,35 +1,31 @@
-# Model card
+# Model card — bundled v20
 
-## Identity and intended use
+## Intended use
 
-**Wind-Up Language Recognition 0.1.0** is a local, CPU-oriented text language classifier. It outputs one of 100 supported codes and is intended for short messages, exploratory language routing, and learning PyTorch. It does not translate, identify speakers, detect language spans, or establish correctness of downstream decisions.
+A local CPU classifier for short application messages and exploratory language routing. It retains all 100 supported codes, including `ja` for Japanese. It predicts one language, not spans or translations. Standard `predict` and `predict_many` always choose a supported code. `predict_details` and `predict_ticket(..., allow_uncertain=True)` can abstain with `und`.
 
-The supported list in [data/languages.json](../data/languages.json) is an explicit coverage choice. It does not claim to be a population-based top 100. Chinese locales share one `zh` label; Japanese is `ja`.
+## Architecture and inference
 
-## Architecture
+Two mean EmbeddingBag networks each use 131,072 buckets and 64-dimensional vectors, character n-grams 1–5, and whole-word hashes repeated four times. One network has a 128-unit ReLU hidden layer; the other is linear. Each produces 100 logits. Temperature-normalized logits are combined with weights 0.75 and 0.25, then a final validation-fitted temperature produces softmax scores. Cleanup uses ftfy and local regexes, with at most 2,000 cleaned characters for the network.
 
-A PyTorch mean `EmbeddingBag` with 131,072 buckets and 64 dimensions feeds a 100-output linear classifier. Features are stable hashes of character n-grams of lengths 1–5 and whole words (weight four). Cleanup uses ftfy and local regular expressions. Inference inspects at most 2,000 cleaned characters.
+Acceptance requires agreement between networks, stored cutoffs by predicted language and text length, and case-sensitive single-word evidence. The latter can reject a standalone ambiguous term or a term whose distinctive lexical language contradicts the prediction. A high softmax score can therefore still result in `und`. These decisions do not inflate raw scores or guarantee correctness.
 
-## Training provenance
+The checkpoint is about 67.9 MB and performs two network passes. Older linear and MLP checkpoints and their global confidence thresholds remain supported. No v20 latency benchmark is claimed.
 
-The bundled **v4** checkpoint adapts the original public-data model trained from checksum-verified WiLI-2018 and MASSIVE 1.1 archives. The base received support-domain fine-tuning with public replay and authored synthetic support requests. Assistant-reviewed labels are not independently verified human gold labels. Held-out synthetic diagnostics are separate from training augmentation.
+## Provenance and model selection
 
-Adaptation uses seed 3187 and Adam with learning rate 0.0003. Epoch 8 of 12 was selected using ticket-validation accuracy plus 0.2 times public-validation macro recall, with a public-validation accuracy preservation constraint. Temperature 1.349526 was fitted on public validation; the confidence threshold 0.929371 was selected on 58 ticket-validation examples, accepting 43 with no observed errors. Test labels did not fit the threshold or choose the epoch.
+The ensemble derives from the WiLI-2018 and MASSIVE 1.1 public-data base, with subsequent local support-domain adaptation, public-data replay, and project-authored multilingual augmentation. Validation selected the adapted MLP checkpoint and ensemble weight. Cutoffs were fitted on 1,418 development examples with no observed accepted errors and a budget of 23 accepted errors on 6,341 public-validation examples. Those are sample observations, not error guarantees. Authored template families and their variants are correlated.
 
-The complete adaptation records and scripts are not distributed. The public training commands reproduce the base-model workflow, not the bundled v4 weights. See [training instructions](training.md), [benchmark notes](benchmark.md), and [third-party notices](../THIRD_PARTY_NOTICES.md).
+Single-word evidence was estimated from language-balanced training-document counts. The released vocabulary includes only terms also present in public training text. Runtime-required weights, configuration, calibration, and vocabulary are included; working provenance metadata and adaptation records are not distributed. Public training commands reproduce the base workflow, not this complete adapted ensemble.
 
-## Evaluation interpretation
+Repeated historical diagnostics and analysis of their errors informed further development ideas. Their rows and labels did not train weights, populate the vocabulary, or fit thresholds, but the overall development/stopping process was adaptive. A 64-message sample was labeled and locked before final candidate predictions and was not used to select or retune it. Its labels were assigned by an assistant and have not been independently verified by humans. See [evaluation details](benchmark.md).
 
-Report weighted accuracy alongside macro recall and macro F1. Public text and assistant utterances differ from other message domains. Synthetic examples demonstrate behavior but are a small authored sample and cannot certify general performance. Measurements are specific to the tested checkpoint, corpus, hardware, and settings; no universal latency or 99% accuracy claim is made.
+## Limitations and tradeoffs
 
-Exact normalized split separation is checked under the project's key function. Semantic paraphrases and underlying-source overlaps can still exist. A fair comparison with another detector must state its supported languages, use the same input preprocessing, and report any excluded languages or examples.
+Very short text, names, identifiers, code, transliteration, unsupported languages, and closely related or mixed languages remain difficult. Cleanup can remove useful evidence. Abstention does not reliably identify every unsupported input. Always evaluate accepted accuracy together with coverage.
 
-## Limitations
+The v20 diagnostics show more accepted correct application responses than v7, with the same or fewer accepted errors on the reported application sets. General-text selective precision regressed: 637 accepted errors versus 515 for v7 on 189,557 public test texts, alongside more accepted correct responses. This is not universal superiority or a production accuracy guarantee. Test reuse, correlated authored examples, and unverified labels limit the conclusions.
 
-Very short text, names, abbreviations, technical identifiers, closely related languages, transliteration, and mixed-language messages can be ambiguous. The detector always chooses a supported language in its standard API, including for unsupported languages. Cleanup can remove useful evidence. One output code cannot describe every language in a multilingual input.
+## Privacy and licenses
 
-Confidence is a model score. The v4 release applies public-validation temperature scaling with a ticket-validation cutoff of 0.929371; this does not claim 99% correctness. Optional calibrated thresholds can abstain with `und`, but neither calibration nor abstention guarantees correctness or identifies all unsupported input. Assess accepted accuracy and coverage together on new labeled data before adopting a threshold.
-
-## Privacy and licensing
-
-Normal inference is local and makes no network calls. Cleanup is not a personal-data anonymizer. Software and authored examples/logo use MIT; model contributions and upstream data terms are documented separately in [MODEL_LICENSE.md](../MODEL_LICENSE.md).
+Inference is offline; cleanup is not a personal-data anonymizer. Software and authored examples use MIT. Weight contributions use CC BY-SA 4.0, subject to upstream rights and attribution in [MODEL_LICENSE.md](../MODEL_LICENSE.md) and [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). Source corpora are not distributed.

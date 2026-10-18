@@ -1,30 +1,48 @@
-# Bundled v4 checkpoint evaluation
+# Bundled v20 checkpoint evaluation
 
-The bundled weights were adapted locally on 2026-10-08 and published on 2026-10-09. Historical local evaluation results below apply to this v4 checkpoint; they are not a fresh production benchmark. Predictions choose among all 100 languages unless uncertainty mode is stated.
+v20 combines a support-adapted MLP with the earlier v4 linear network. All predictions choose among the same 100 languages; the optional acceptance policy can abstain. These are local diagnostics, not production guarantees.
 
-| Evaluation | Public base | Bundled v4 |
-| --- | ---: | ---: |
-| Public held-out accuracy, 189,557 texts | 98.29% | 98.11% |
-| Public macro recall, 100 languages | 96.91% | 96.54% |
-| Fresh ticket test, 120 examples | 85.83% | 99.17% (119/120) |
-| Fresh tickets up to 100 characters, 80 examples | 85.00% | 98.75% (79/80) |
-| Historical ticket test, 114 examples | 86.84% | 97.37% (111/114) |
-| Held-out authored synthetic diagnostics, 63 examples | 98.41% | 100% |
+## Accepted responses
 
-Ticket labels were assigned by an assistant before prediction, not independently verified by humans. The fresh set contains 64 German, 49 English, 5 Czech, 1 Portuguese, and 1 Chinese ticket. Exact normalized overlap was excluded, but related templates may remain. These small samples do not establish 99% production accuracy or performance for every language. Historical tests and the public test were already used for earlier diagnostics.
+Cells report **correct accepted / incorrect accepted**. Other inputs receive `und`. The same runner and texts were used for the historical comparisons.
 
-## Uncertainty
+| Diagnostic | Texts | v4 | v7 | v20 |
+| --- | ---: | ---: | ---: | ---: |
+| Historical multilingual application set | 200 | 170 / 0 | 169 / 0 | 183 / 0 |
+| Historical EN/DE/PL/CS set | 198 | 172 / 2 | 173 / 2 | 174 / 2 |
+| Earlier application set | 120 | 95 / 0 | 96 / 0 | 104 / 0 |
+| Earlier application set | 114 | 85 / 0 | 87 / 0 | 97 / 0 |
+| Authored application diagnostics | 1214 | 880 / 3 | 894 / 3 | 982 / 8 |
+| Difficult-language diagnostics | 339 | 209 / 13 | 211 / 12 | 217 / 12 |
+| Public general-text test | 189557 | 177728 / 504 | 177657 / 515 | 179105 / 637 |
 
-Public-validation temperature: 1.349526. Confidence cutoff: 0.929371, selected on 58 ticket-validation examples with 43 accepted and zero observed errors. Calibration does not change the highest-scoring language.
+On the 117 English inputs within the EN/DE/PL/CS set, v4 accepted 99 correct, v7 100 correct, and v20 101 correct, with no accepted errors. This is a small English improvement, not evidence of a large or universal gain.
 
-On the fresh ticket test, uncertainty mode accepted 95/120 (79.17%) with 95 correct responses. On the historical test it accepted 85/114 with 85 correct responses and rejected six separately labeled und examples. Zero observed errors is not a guarantee.
+Historical sets were evaluated repeatedly. Their errors informed new hypotheses, although their rows/labels did not train weights, populate the lexical tables, or fit thresholds. Adaptive development and repeated stopping decisions limit their evidential value. Authored examples are correlated and labels are not independently verified human gold.
 
-The regression example `My VPN stopped working today. Please reinstall it.` changes from English at confidence 0.8418 (rejected by the old 0.9 cutoff) to English at 0.9958 (accepted).
+## Final held-out application sample
 
-## Provenance and reproducibility
+Before final candidate predictions, a separate 64-message sample and its assistant-assigned labels were locked. It was not used for selection or subsequent retuning. Exact normalized overlap with known training/development/evaluation inputs was excluded; related templates can remain.
 
-Model SHA-256: `29adde51c8dc54aca5031f61730449c17ed6162ba0f79a209ce34ec36f3ccb0f`.
+- v4: 52/64 correct accepted, 0 incorrect accepted.
+- v7: 53/64 correct accepted, 0 incorrect accepted.
+- v20: 56/64 correct accepted, 0 incorrect accepted.
 
-Checkpoint size: 33,585,423 bytes. Architecture and supported codes remain unchanged. Adaptation and ticket-evaluation records are not published. See the [model card](model-card.md) for adaptation provenance and [training instructions](training.md) for the public base workflow. The complete v4 adaptation workflow is not available for reproduction.
+The sample has 36 German, 23 English, 2 Czech, and 3 ambiguous/metadata inputs. v20 accepted 34 German, 20 English, and 2 Czech responses correctly and rejected all three ambiguous inputs. Assistant labels need independent human verification; this is not a statistical certification.
 
-[Original public-base measurements](evaluation.json) are retained as historical results for SHA-256 `ec2bb56baba69d1b71d7cf288d0723199f169dfff45a3425b5544fc41bb2fe30`; their calibration, metrics, and latency do not describe the new bundled weights. No new latency benchmark is claimed here.
+## Public-text tradeoff and cost
+
+- v4: raw accuracy 98.1140%; macro recall 96.5408%; accepted precision 99.7172%.
+- v7: raw accuracy 98.0992%; macro recall 96.5425%; accepted precision 99.7110%.
+- v20: raw accuracy 98.0876%; macro recall 96.5913%; accepted precision 99.6456%.
+
+v20 accepts more correct general-text responses but also more errors (637 versus 515 for v7). Assess both coverage and precision for your domain. Two network passes and about 67.9 MB of weights replace the earlier single network of about 33.6 MB. No new latency measurement is claimed.
+
+## Public packaging and reproducibility
+
+Bundled model SHA-256: `61eca1817f44929b308c9ee1379781e46da33f83eb97e66faa78fa08ce73abac`.
+Checkpoint size: 67,869,297 bytes.
+
+The public checkpoint omits working metadata and retains only lexical terms present in public training text. Public runtime/package parity is checked against the locked local v20 application predictions, including the 64-message sample. Raw neural weights, calibration temperatures, ensemble weights, and cutoffs are preserved. Source application records and full adaptation artifacts are not distributed. The complete adapted ensemble is therefore not reproducible from the base public training commands alone.
+
+The [machine-readable v20 summary](evaluation-v20.json) identifies this checkpoint. [Original public-base measurements](evaluation.json) remain historical results for the original base hash and must not be attributed to v20. See the [model card](model-card.md) for architecture and selection limitations.

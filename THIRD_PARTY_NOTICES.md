@@ -30,6 +30,6 @@ PyTorch, ftfy, NumPy, and pycountry are installed from their respective distribu
 
 `data/demo.csv`, `data/synthetic.csv`, and `assets/logo.png` are project-authored demonstration/synthetic material and logo artwork, distributed under the repository's MIT license. Synthetic evaluation is illustrative and cannot substitute for an independently labeled application benchmark.
 
-## v4 ticket adaptation
+## v20 adaptation
 
-The bundled v4 weights include support-domain adaptation with public replay data and project-authored synthetic support requests. Adaptation records are not redistributed. Assistant-reviewed labels are not independently verified human gold. The model contribution license covers project contributions only and does not grant rights to source records.
+The bundled v20 weights combine an adapted MLP and an earlier linear network. They include support-domain adaptation with public replay data and project-authored synthetic support requests. Adaptation records are not redistributed. Assistant-reviewed labels are not independently verified human gold. The model contribution license covers project contributions only and does not grant rights to source records.

@@ -24,7 +24,10 @@ def encode(
     max_length: int = 2000,
     word_features: bool = False,
     preprocessing: str = "none",
+    word_repeat: int = 4,
 ) -> list[int]:
+    if not isinstance(word_repeat, int) or isinstance(word_repeat, bool) or word_repeat < 1:
+        raise ValueError("Word feature repetition must be a positive integer")
     if preprocessing == "ticket_v2":
         from ticket_text import normalize_ticket_text
 
@@ -60,7 +63,7 @@ def encode(
                         % buckets
                     )
                 index = _word_cache[key]
-            features.extend([index] * 4)
+            features.extend([index] * word_repeat)
     return features
 
 
@@ -152,6 +155,68 @@ def train(data: Path, output: Path, epochs: int) -> None:
     print(f"Saved model: {output}")
 
 
+class LanguageModelEnsemble(nn.Module):
+    """Weighted logits from compatible models, with an optional agreement gate."""
+
+    def __init__(self, models, weights, temperatures, require_agreement=False):
+        super().__init__()
+        if len(models) != len(weights) or len(models) != len(temperatures) or not models:
+            raise ValueError("Invalid ensemble components")
+        if any(w <= 0 for w in weights) or any(t <= 0 for t in temperatures):
+            raise ValueError("Weights and temperatures must be positive")
+        self.members = nn.ModuleList(models)
+        total = sum(weights)
+        self.weights = [w / total for w in weights]
+        self.temperatures = temperatures
+        self.require_agreement = require_agreement
+
+    def forward_with_agreement(self, ids, offsets):
+        outputs = [model(ids, offsets) for model in self.members]
+        logits = sum(w * value / t for w, value, t in zip(self.weights, outputs, self.temperatures))
+        predictions = torch.stack([value.argmax(1) for value in outputs])
+        agree = (predictions == predictions[0]).all(0)
+        if not self.require_agreement:
+            agree = torch.ones_like(agree)
+        return logits, agree
+
+    def forward(self, ids, offsets):
+        return self.forward_with_agreement(ids, offsets)[0]
+
+def model_from_checkpoint(checkpoint):
+    config = checkpoint.get("config", {})
+    model = build_model(len(checkpoint["languages"]), config.get("buckets", BUCKETS), config.get("embedding_dim", 32), config.get("hidden_dim", 128), config.get("arch", "linear"))
+    model.load_state_dict(checkpoint["state_dict"])
+    ensemble = checkpoint.get("ensemble")
+    if ensemble:
+        companions = ensemble["companions"]
+        feature_keys = ("buckets", "ngrams", "max_length", "word_features", "preprocessing", "word_repeat")
+        defaults = {"buckets": BUCKETS, "ngrams": (1, 2, 3), "max_length": 2000, "word_features": False, "preprocessing": "none", "word_repeat": 4}
+        for other in companions:
+            if other["languages"] != checkpoint["languages"]:
+                raise ValueError("Ensemble members must use the same language order")
+            for key in feature_keys:
+                left = config.get(key, defaults[key])
+                right = other.get("config", {}).get(key, defaults[key])
+                if key == "ngrams":
+                    left, right = tuple(left), tuple(right)
+                if left != right:
+                    raise ValueError("Incompatible ensemble feature encoding: " + key)
+        model = LanguageModelEnsemble([model] + [model_from_checkpoint(c) for c in companions], ensemble["weights"], ensemble["temperatures"], ensemble.get("require_agreement", False))
+    return model
+
+def evidence_profile(text, *, case_sensitive=False):
+    """Shared training/runtime profile for lexical evidence; no language labels."""
+    from ticket_text import normalize_ticket_text
+
+    text = normalize_ticket_text(text)
+    words = re.findall(r"[^\W\d_]+", text)
+    single = words[0] if len(words) == 1 and all("LATIN" in unicodedata.name(c, "") for c in words[0]) else None
+    if single is not None and not case_sensitive:
+        single = single.casefold()
+    cjk = sum("CJK" in unicodedata.name(c, "") or "HIRAGANA" in unicodedata.name(c, "") or "KATAKANA" in unicodedata.name(c, "") or "HANGUL" in unicodedata.name(c, "") for c in text)
+    return ("long" if len(words) > 3 or cjk >= 8 else "short"), single
+
+
 class LanguageDetector:
     def __init__(self, model_path: str | Path = "model.pt"):
         checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
@@ -163,17 +228,13 @@ class LanguageDetector:
             "max_length": config.get("max_length", 2000),
             "word_features": config.get("word_features", False),
             "preprocessing": config.get("preprocessing", "none"),
+            "word_repeat": config.get("word_repeat", 4),
         }
-        self.model = build_model(
-            len(self.languages),
-            self.encoding_options["buckets"],
-            config.get("embedding_dim", 32),
-            config.get("hidden_dim", 128),
-            config.get("arch", "linear"),
-        )
-        self.model.load_state_dict(checkpoint["state_dict"])
+        self.model = model_from_checkpoint(checkpoint)
         self.model.eval()
         self.calibration = checkpoint.get("calibration", {})
+        self._ambiguous_single_words = set(self.calibration.get("ambiguous_single_words", []))
+        self._single_word_language = self.calibration.get("single_word_language", {})
         self._cache: dict[str, str] = {}
         self._cache_size = 1000
         self._cache_lock = threading.Lock()
@@ -223,16 +284,32 @@ class LanguageDetector:
         return [result for result in results if result is not None]
 
     def predict_details(self, text: str) -> dict:
-        """Return optional confidence details and the und code when uncertain."""
+        """Return calibrated score details and abstain when evidence is insufficient."""
         with torch.inference_mode():
-            logits = self.model(*batch([text], **self.encoding_options))
+            inputs = batch([text], **self.encoding_options)
+            if isinstance(self.model, LanguageModelEnsemble):
+                logits, agreement = self.model.forward_with_agreement(*inputs)
+                agree = agreement.item()
+            else:
+                logits = self.model(*inputs)
+                agree = True
             temperature = self.calibration.get("temperature", 1.0)
             probabilities = (logits / temperature).softmax(dim=1)
             confidence, index = probabilities.max(dim=1)
             confidence = confidence.item()
             best = self.languages[index.item()]
         threshold = self.calibration.get("min_confidence")
-        uncertain = threshold is not None and confidence < threshold
+        threshold = self.calibration.get("min_confidence_by_language", {}).get(
+            best, threshold
+        )
+        ambiguous = False
+        contextual = self.calibration.get("min_confidence_by_language_and_length", {})
+        if contextual or self._ambiguous_single_words or self._single_word_language:
+            length_group, single_word = evidence_profile(text, case_sensitive=self.calibration.get("word_evidence_case_sensitive", False))
+            lexical_language = self._single_word_language.get(single_word)
+            ambiguous = single_word in self._ambiguous_single_words or (lexical_language is not None and lexical_language != best)
+            threshold = contextual.get(best, {}).get(length_group, threshold)
+        uncertain = ambiguous or not agree or (threshold is not None and confidence < threshold)
         return {
             "language": "und" if uncertain else best,
             "best_language": best,
@@ -269,6 +346,7 @@ def main() -> None:
     prediction = commands.add_parser("predict")
     prediction.add_argument("text")
     prediction.add_argument("--model", type=Path, default=Path("model.pt"))
+    prediction.add_argument("--allow-uncertain", action="store_true", help="Return und when the calibrated acceptance policy rejects the input")
     args = parser.parse_args()
     try:
         if args.command == "train":
@@ -276,7 +354,8 @@ def main() -> None:
                 raise ValueError("The number of epochs must be positive.")
             train(args.data, args.model, args.epochs)
         else:
-            print(LanguageDetector(args.model).predict(args.text))
+            detector = LanguageDetector(args.model)
+            print(detector.predict_ticket(args.text, allow_uncertain=True) if args.allow_uncertain else detector.predict(args.text))
     except (ValueError, OSError) as error:
         parser.exit(1, f"Error: {error}\n")
 

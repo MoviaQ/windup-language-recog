@@ -1,6 +1,6 @@
 # Reproduce public-data training
 
-These commands reproduce the public **WiLI-2018** and **MASSIVE 1.1** base-model workflow. The bundled v4 weights additionally use support-domain adaptation and synthetic training augmentation. The complete adaptation workflow is not distributed, so these commands do not reproduce v4. Training is optional: normal inference uses the bundled `model.pt`.
+These commands reproduce the public **WiLI-2018** and **MASSIVE 1.1** base-model workflow. The bundled v20 weights additionally use support-domain adaptation and synthetic training augmentation. The complete adaptation workflow is not distributed, so these commands do not reproduce v20. Training is optional: normal inference uses the bundled `model.pt`.
 
 ## Prepare and train
 
@@ -40,7 +40,7 @@ The test split must be evaluated only after selecting the checkpoint. Do not cha
 
 ## Calibration and evaluation
 
-`evaluate_public.py --model model-retrained.pt` fits temperature on public validation data, stores it in that checkpoint, and evaluates public held-out and authored synthetic examples. Its fixed confidence cutoff is 0.9 after scaling; the cutoff is an operational choice, not a claim of 99% accuracy. Evaluation writes `reports/public_evaluation.json` and measures warmed CPU predictions at selected text lengths. The checkpoint file is updated with calibration metadata.
+`evaluate_public.py --model model-retrained.pt` fits temperature on public validation data, stores it in that checkpoint, and evaluates public held-out and authored synthetic examples. This base-model workflow uses a fixed confidence cutoff of 0.9 after scaling; the cutoff is an operational choice, not a claim of 99% accuracy. Evaluation writes `reports/public_evaluation.json` and measures warmed CPU predictions at selected text lengths. The checkpoint file is updated with calibration metadata. Run this workflow on `model-retrained.pt`, not on the bundled v20 checkpoint: it replaces calibration and does not reproduce the v20 ensemble acceptance policy.
 
 ## Inspect and experiment
 
