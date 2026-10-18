@@ -7,7 +7,13 @@ from pathlib import Path
 
 import torch
 
-from language_detector import LanguageDetector, build_model, encode
+from language_detector import (
+    LanguageDetector,
+    build_model,
+    encode,
+    merge_code,
+    merge_languages,
+)
 from ticket_text import extract_ticket_text, normalize_ticket_text
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +29,15 @@ class DetectorTests(unittest.TestCase):
             encode("ZaÅ¼Ã³Å‚Ä‡", preprocessing="ticket_v2"),
             encode("Zażółć", preprocessing="ticket_v2"),
         )
+
+    def test_hbs_cluster_merge_mapping(self):
+        self.assertEqual(
+            merge_languages(["bs", "hr", "sr", "en", "de"], True),
+            ["de", "en", "hbs"],
+        )
+        self.assertEqual(merge_code("hr", True), "hbs")
+        self.assertEqual(merge_code("en", True), "en")
+        self.assertEqual(merge_code("hr", False), "hr")
 
     def test_invalid_inputs_and_cap(self):
         for text in ("", "   ", "123 !!!", "1" * 2000 + "letters"):
