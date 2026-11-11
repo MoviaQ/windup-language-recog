@@ -1,3 +1,4 @@
 -r requirements.txt
 numpy>=1.26,<3
 pycountry>=24.6,<27
+pyarrow>=15,<27

@@ -60,3 +60,17 @@ For multi-million-row training sets:
 - `--encode-workers N` builds the feature cache in N processes; the cache is byte-identical to a single-process build.
 - `--sampling-alpha 0.3 --uniform-loss` draws each epoch's rows so that a language with n rows gets a share proportional to n^0.3 (temperature sampling as in NLLB, OpenLID and GlotLID). The trainer refuses `--sampling-alpha` without `--uniform-loss`, so languages are not rebalanced twice.
 - `--valid-csv PATH` replaces the data-dir validation files for checkpoint selection. `tools/export_flores_csv.py --flores-dir … --output reports/flores_dev.csv` writes FLORES-200 **dev** (full sentences and 20/50/100-character prefixes); devtest stays reserved for reporting ([FLORES benchmark](flores-benchmark.md)).
+
+### Multidomain corpus (experimental)
+
+`prepare_multidomain_data.py` builds `data/prepared_v2/` from web (MADLAD-400, FineWeb-2 slices, MaCoCu, *WaC), Wikipedia, short-sentence (Tatoeba, MASSIVE train) and other (OpenLID-v3 permissive tags and MT560, SETimes) text. It needs `requirements-training.txt` (adds pyarrow) and network access; `--help` lists the flags.
+
+```bash
+.venv/bin/python prepare_multidomain_data.py --cap 50000 --workers 4
+.venv/bin/python train_model.py --data-dir data/prepared_v2 ...   # not --short-only
+```
+
+- Every segment passes ftfy + NFC, a length filter, a per-label script filter (at least half of the letters in the label's scripts), exact and prefix/suffix near-deduplication, and a FLORES-200 filter over all 204 dev and devtest files (exact normalized match, or at least half of the segment's 8-word / 30-character shingles in FLORES). WiLI test, MASSIVE dev/test, the WiLI validation rows of `prepare_public_data.py`, `data/synthetic.csv` and the ticket fixtures are filtered the same way. Keys seen under more than one label are dropped everywhere.
+- Each language gets `--cap` training rows: 70% full segments in a 40/30/15/15 web/wiki/short/other mix (a domain short of rows passes its share to the others) and 30% crops of 4–16 words (16–60 characters for unspaced scripts). `valid.csv` is an in-corpus split (`--valid` rows per language) for early stopping only.
+- Label decisions: Sorani (ckb) and Kurmanji train `ku`; `azb`, `sh` and `yue` are dropped; `zh` includes Traditional script; `sr` and `uz` keep both scripts; `bs`/`hr`/`sr` stay separate. Nynorsk is not a label: its rows go to `negatives/nn.csv` for abstention calibration.
+- `manifest.json` records per-language and per-source counts, every drop counter (see `counter_legend`), licences, pinned dataset revisions and a `sources_lock` entry (URL, upstream sha256 when published, bytes read and their sha256) for every remote file read. `train_sources.tsv` gives the source of every row.
