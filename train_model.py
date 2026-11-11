@@ -109,6 +109,15 @@ class EncodedDataset:
         return torch.from_numpy(ids.astype(np.int64)), torch.from_numpy(offsets)
 
 
+def _jsonable(value):
+    """Arguments for the JSON report: paths (also inside --valid-csv lists) as str."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    return value
+
+
 def temperature_row_probabilities(
     targets: torch.Tensor, counts: list[int], alpha: float
 ) -> torch.Tensor:
@@ -371,10 +380,7 @@ def main() -> None:
         "best_valid_macro_f1": best_record["valid_macro_f1"],
         "seconds": time.perf_counter() - start,
         "history": history,
-        "arguments": {
-            key: str(value) if isinstance(value, Path) else value
-            for key, value in vars(args).items()
-        },
+        "arguments": {key: _jsonable(value) for key, value in vars(args).items()},
     }
     report["selection_metric"] = args.selection
     report["best_selection_score"] = best

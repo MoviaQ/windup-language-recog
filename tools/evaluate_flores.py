@@ -401,6 +401,52 @@ def evaluate_system(items, slices, predictions, accepted=None) -> dict[str, Any]
     return result
 
 
+def paired_comparison(
+    golds: list[str], ours: list[str], other: list[str], indices: list[int],
+    groups: list[str], resamples: int = 1000, seed: int = 0,
+) -> dict[str, Any]:
+    """Paired accuracy difference (ours - other) on identical items.
+
+    Discordant counts give McNemar's test (normal approximation, continuity
+    correction). The 95% interval is a bootstrap over FLORES sentences, not
+    items, because the prefixes of one sentence are not independent.
+    """
+    import math
+    import random
+
+    ours_only = sum(1 for i in indices if ours[i] == golds[i] and other[i] != golds[i])
+    other_only = sum(1 for i in indices if other[i] == golds[i] and ours[i] != golds[i])
+    discordant = ours_only + other_only
+    if discordant:
+        z = (abs(ours_only - other_only) - 1) / math.sqrt(discordant)
+        p_value = math.erfc(max(z, 0.0) / math.sqrt(2))
+    else:
+        p_value = 1.0
+    by_group: dict[str, list[int]] = {}
+    for i in indices:
+        by_group.setdefault(groups[i], []).append(i)
+    keys = sorted(by_group)
+    diff_per_group = [
+        sum((ours[i] == golds[i]) - (other[i] == golds[i]) for i in by_group[k]) for k in keys
+    ]
+    size_per_group = [len(by_group[k]) for k in keys]
+    rng = random.Random(seed)
+    estimates = []
+    for _ in range(resamples):
+        picks = [rng.randrange(len(keys)) for _ in keys]
+        estimates.append(sum(diff_per_group[j] for j in picks) / sum(size_per_group[j] for j in picks))
+    estimates.sort()
+    return {
+        "texts": len(indices),
+        "accuracy_difference": (ours_only - other_only) / len(indices),
+        "ci95": [estimates[int(0.025 * resamples)], estimates[int(0.975 * resamples) - 1]],
+        "ours_only_correct": ours_only,
+        "other_only_correct": other_only,
+        "mcnemar_p": p_value,
+        "resampled_unit": "FLORES sentence (all its prefixes together)",
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--flores-dir", type=Path, required=True, help="extracted flores200_dataset directory")
@@ -417,6 +463,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit-per-language", type=int, help="first N sentences per file (smoke runs)")
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 1,
                         help="processes for our model, one torch thread each")
+    parser.add_argument("--predictions-out", type=Path,
+                        help="also write per-item gold and predictions of every system as JSONL")
     args = parser.parse_args(argv)
     if args.limit_per_language is not None and args.limit_per_language < 1:
         parser.error("--limit-per-language must be positive")
@@ -460,6 +508,7 @@ def main(argv: list[str] | None = None) -> int:
 
     systems = {"ours": evaluate_system(items, slices, raw, accepted)}
     external_info = {}
+    external_predictions: dict[str, list[str]] = {}
     for path in args.fasttext_predictions:
         try:
             external = load_external(path, args.split, items, languages)
@@ -473,8 +522,26 @@ def main(argv: list[str] | None = None) -> int:
         systems[f"{name}_restricted"] = evaluate_system(items, slices, external["restricted"])
         systems[f"{name}_unrestricted"] = evaluate_system(items, slices, external["unrestricted"])
         external_info[name] = {k: v for k, v in external.items() if k not in ("restricted", "unrestricted")}
+        external_predictions[name] = external["restricted"]
         print(f"{name}: {external['restricted_no_mapped_label_in_top_k']} items without a mapped label "
               f"in top-k (counted wrong when restricted); unreachable codes {external['unreachable_codes']}")
+
+    golds = [item["gold"] for item in items]
+    groups = [item["id"].rsplit(":", 1)[0] for item in items]
+    paired = {
+        f"ours_vs_{name}_restricted": {
+            slice_name: paired_comparison(golds, raw, predictions, indices, groups)
+            for slice_name, indices in slices.items()
+        }
+        for name, predictions in external_predictions.items()
+    }
+    if args.predictions_out:
+        args.predictions_out.parent.mkdir(parents=True, exist_ok=True)
+        with args.predictions_out.open("w", encoding="utf-8") as stream:
+            for i, item in enumerate(items):
+                row = {"id": item["id"], "gold": item["gold"], "ours": raw[i], "ours_accepted": accepted[i]}
+                row.update({f"{name}_restricted": p[i] for name, p in external_predictions.items()})
+                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     report = {
         "meta": {
@@ -497,6 +564,7 @@ def main(argv: list[str] | None = None) -> int:
         "ours_errors": {"count": len(errors), "items": [list(e) for e in errors]},
         "external": external_info,
         "systems": systems,
+        "paired": paired,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -509,6 +577,12 @@ def main(argv: list[str] | None = None) -> int:
             fpr = "-" if entry["macro_fpr"] is None else f"{100 * entry['macro_fpr']:.4f}"
             print(f"| {system} | {name} | {entry['texts']} | {100 * entry['accuracy']:.2f} | "
                   f"{100 * entry['macro_f1']:.2f} | {fpr} | {extra} |")
+    for comparison, by_slice in paired.items():
+        print(f"| {comparison} | slice | accuracy diff (pp) | 95% CI (pp) | ours-only / other-only | McNemar p |")
+        for name, entry in by_slice.items():
+            low, high = entry["ci95"]
+            print(f"| | {name} | {100 * entry['accuracy_difference']:+.2f} | {100 * low:+.2f} .. {100 * high:+.2f} | "
+                  f"{entry['ours_only_correct']} / {entry['other_only_correct']} | {entry['mcnemar_p']:.2g} |")
     print(f"wrote {output}")
     return 0
 

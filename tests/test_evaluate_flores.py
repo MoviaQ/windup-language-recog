@@ -19,6 +19,7 @@ from tools.evaluate_flores import (
     load_languages,
     main,
     map_external_label,
+    paired_comparison,
     score,
     slice_items,
     text_digest,
@@ -181,6 +182,23 @@ class SyntheticFloresTests(unittest.TestCase):
         write(drop="eng_Latn:0:p20")
         with self.assertRaises(ValueError):
             load_external(path, "dev", items, sorted(LANGUAGES))
+
+
+class PairedComparisonTests(unittest.TestCase):
+    def test_counts_difference_and_identical_systems(self):
+        golds = ["en", "en", "de", "de"]
+        ours = ["en", "en", "de", "en"]
+        other = ["en", "de", "en", "en"]
+        groups = ["a", "a", "b", "b"]
+        result = paired_comparison(golds, ours, other, [0, 1, 2, 3], groups, resamples=200)
+        self.assertEqual((result["ours_only_correct"], result["other_only_correct"]), (2, 0))
+        self.assertAlmostEqual(result["accuracy_difference"], 0.5)
+        low, high = result["ci95"]
+        self.assertLessEqual(low, high)
+        same = paired_comparison(golds, ours, ours, [0, 1, 2, 3], groups, resamples=50)
+        self.assertEqual(same["accuracy_difference"], 0.0)
+        self.assertEqual(same["mcnemar_p"], 1.0)
+        self.assertEqual(same["ci95"], [0.0, 0.0])
 
 
 if __name__ == "__main__":
