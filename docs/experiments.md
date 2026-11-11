@@ -5,7 +5,7 @@ Experimental checkpoints are not the bundled `model.pt`. Each entry names the co
 ## Exp A: v21 MLP member architecture on the multidomain corpus
 
 - **Question:** how much do data alone change FLORES results, with the architecture unchanged?
-- **Data:** `prepare_multidomain_data.py --cap 50000 --workers 4` at commit `30df1d6` gives 5,000,000 train rows, 50,000 for each of the 100 codes. FLORES dev and devtest are filtered out of the training data (see [training](training.md)).
+- **Data:** `prepare_multidomain_data.py --cap 50000 --workers 4` with the filters of commit `269d6e5` gives 5,000,000 train rows, 50,000 for each of the 100 codes. FLORES dev and devtest are filtered out of the training data (see [training](training.md)).
 - **Model:** single MLP. Configuration is the same as the v21 MLP member: 131,072 buckets, dim 64, hidden 128, 1–5-grams plus words, `ticket_v2`, dropout 0.05, Adam lr 0.003, batch 512.
 - **Selection:** macro F1 on FLORES-200 **dev**. Dev contains full sentences and their 20/50/100-character prefixes, 367,729 items (`tools/export_flores_csv.py`).
 
