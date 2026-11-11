@@ -201,6 +201,16 @@ class FilterTest(unittest.TestCase):
         self.assertEqual(self.check("12345 67890 12345 a", "en", False), "too_few_letters")
         self.assertEqual(self.check("Heading only", "en", need_words=True), "too_few_words")
 
+    def test_markup_and_uncleanable_rows(self):
+        # Rows observed in the first data/prepared_v2 build.
+        self.assertEqual(self.check("| population_total = 1200", "yo", False), "markup")
+        self.assertEqual(self.check("{{Infobox settlement | name = Graz}}", "en", False), "markup")
+        self.assertEqual(self.check('<span class="audioIcon">Kraków</span> miasto', "pl", False), "markup")
+        self.assertEqual(self.check("Jd5 Je5 Kf3 Kg4", "sk", False), "no_letters_after_cleanup")
+        # Ordinary prose with "=" or angle-quoted titles is kept.
+        self.assertIsInstance(self.check("Dado que w = 1, se sale del bucle.", "es", False), tuple)
+        self.assertIsInstance(self.check("Film <Rewind> ma premierę jutro wieczorem", "pl", False), tuple)
+
     def test_segments(self):
         parts = prep.split_segments("Prva rečenica. Druga rečenica! 第一句。第二句。", 300)
         self.assertEqual(parts, ["Prva rečenica.", "Druga rečenica!", "第一句。", "第二句。"])

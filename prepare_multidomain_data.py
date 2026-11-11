@@ -70,6 +70,7 @@ import ftfy
 import numpy as np
 
 from dataset_utils import read_csv, text_key, write_csv
+from ticket_text import normalize_ticket_text
 
 ROOT = Path(__file__).resolve().parent
 USER_AGENT = "windup-language-recog-data-prep/0.1"
@@ -335,6 +336,25 @@ def script_check(text: str, label: str, min_share: float = 0.5) -> str | None:
 _SENTENCE_END = re.compile(r"(?<=[.!?;।॥۔؟።፧။։។៕།])\s+|(?<=[。！？])|\n+")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 _URL = re.compile(r"https?://|www\.|\S+@\S+\.\w")
+# Wiki template/table rows ("| population_total =", "{{...}}", "[[File:...|"),
+# and HTML/XML tags that leaked from dumps. Such rows teach markup, not language.
+_MARKUP = re.compile(
+    r"^\s*(?:[|!]|\{\||\|\})"
+    r"|\{\{|\}\}|\[\[|\]\]"
+    # Real tags only: closing, with attributes, self-closing, or a common bare
+    # HTML/wiki tag. Angle-quoted titles such as "<Rewind>" are prose.
+    r"|</[A-Za-z][\w:-]*\s*>"
+    r"|<[A-Za-z][\w:-]*\s+[\w:-]+\s*=[^<>]{0,200}>"
+    r"|<[A-Za-z][\w:-]*\s*/>"
+    r"|<(?:br|hr|p|div|span|center|small|big|sup|sub|ref|references|nowiki|b|i|u|s|tr|td|th|li|ul|ol)\s*>",
+    re.IGNORECASE,
+)
+
+
+def has_letters_after_runtime_cleanup(text: str) -> bool:
+    """Mirror language_detector.encode(preprocessing="ticket_v2"): a row whose
+    cleaned text has no letter cannot be encoded and would abort training."""
+    return any(char.isalpha() for char in normalize_ticket_text(text))
 
 
 def normalize_text(text: str) -> str:
@@ -403,6 +423,8 @@ class Filter:
             return "too_long"
         if _URL.search(text):
             return "url_or_email"
+        if _MARKUP.search(text):
+            return "markup"
         non_space = sum(1 for c in text if not c.isspace())
         letters = sum(1 for c in text if c.isalpha())
         if letters < 0.5 * non_space:
@@ -412,6 +434,8 @@ class Filter:
             return reason
         if need_words and label not in UNSPACED_LABELS and len(text.split()) < self.min_words:
             return "too_few_words"
+        if not has_letters_after_runtime_cleanup(text):
+            return "no_letters_after_cleanup"
         key = text_key(text)
         if not key:
             return "empty_key"
@@ -1122,7 +1146,7 @@ DOMAINS = ("web", "wiki", "short", "other")
 COLLECT_ORDER = ("short", "other", "wiki", "web")  # scarcest first; web absorbs deficits
 
 COUNTER_LEGEND = {
-    "too_short/too_long/url_or_email/too_few_letters/script/no_letters/too_few_words/empty_key":
+    "too_short/too_long/url_or_email/markup/too_few_letters/script/no_letters/no_letters_after_cleanup/too_few_words/empty_key":
         "segment dropped by the per-segment filter",
     "duplicate_exact": "same text_key already kept for this label",
     "duplicate_near": "same first or last 40 key characters already kept for this label",
