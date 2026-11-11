@@ -56,6 +56,19 @@ class DetectorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 detector.predict_many(texts, batch_size=0)
 
+    def test_identifier_removal_keeps_unspaced_scripts(self):
+        # FLORES jpn_Jpan devtest sentence prefix: the old `\w+` rule erased
+        # every kana/kanji next to "802.11n", leaving only punctuation.
+        self.assertEqual(
+            normalize_ticket_text("802.11n規格に準拠していれば、2.4Ghzで接続できます。"),
+            ". 規格に準拠していれば、 . で接続できます。",
+        )
+        self.assertEqual(normalize_ticket_text("foo_bar日本語のテキスト"), "日本語のテキスト")
+        # Latin identifiers are still removed as before.
+        self.assertEqual(normalize_ticket_text("kód123 nefunguje"), "nefunguje")
+        self.assertEqual(normalize_ticket_text("user_name ist falsch"), "ist falsch")
+        self.assertEqual(normalize_ticket_text("Server01 down"), "down")
+
     def test_cleaning_preserves_description_language(self):
         self.assertEqual(
             normalize_ticket_text("Pomocy! https://example.com INC123"), "Pomocy!"

@@ -239,6 +239,11 @@ class LanguageDetector:
         self._cache_size = 1000
         self._cache_lock = threading.Lock()
 
+    def clear_cache(self) -> None:
+        """Forget memoized predict() results (used by latency measurements)."""
+        with self._cache_lock:
+            self._cache.clear()
+
     def _cache_get(self, text: str) -> str | None:
         with self._cache_lock:
             return self._cache.get(text)

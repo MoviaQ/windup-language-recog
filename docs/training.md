@@ -40,7 +40,7 @@ The test split must be evaluated only after selecting the checkpoint. Do not cha
 
 ## Calibration and evaluation
 
-`evaluate_public.py --model model-retrained.pt` fits temperature on public validation data, stores it in that checkpoint, and evaluates public held-out and authored synthetic examples. This base-model workflow uses a fixed confidence cutoff of 0.9 after scaling; the cutoff is an operational choice, not a claim of 99% accuracy. Evaluation writes `reports/public_evaluation.json` and measures warmed CPU predictions at selected text lengths. The checkpoint file is updated with calibration metadata. Run this workflow on `model-retrained.pt`, not on the bundled v21 checkpoint: it replaces calibration and does not reproduce the v21 ensemble acceptance policy.
+`evaluate_public.py --model model-retrained.pt` fits temperature on public validation data, stores it in that checkpoint, and evaluates public held-out and authored synthetic examples. This base-model workflow uses a fixed confidence cutoff of 0.9 after scaling; the cutoff is an operational choice, not a claim of 99% accuracy. Evaluation writes `reports/public_evaluation.json` and measures warmed CPU predictions at selected text lengths. The checkpoint file is updated with calibration metadata. `--model` is required, and the script refuses checkpoints that carry a release acceptance policy (such as the bundled v21 `model.pt`), because it would replace that policy with a single temperature. Latency is measured with the prediction cache cleared before every call.
 
 ## Inspect and experiment
 

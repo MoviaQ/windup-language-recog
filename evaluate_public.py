@@ -13,18 +13,43 @@ import torch
 
 from dataset_utils import read_csv
 from language_detector import LanguageDetector
-from train_model import EncodedDataset, score
 
 ROOT = Path(__file__).resolve().parent
 
 
+def release_policy_keys(checkpoint: dict) -> list[str]:
+    """Checkpoint parts this workflow would destroy by rewriting calibration."""
+    calibration = checkpoint.get("calibration", {})
+    return sorted(k for k in ("ensemble", "adaptation_v21") if k in checkpoint) + sorted(
+        k
+        for k in ("min_margin_by_length", "min_confidence_by_language")
+        if k in calibration
+    )
+
+
 def main():
+    # Training-only dependencies (numpy); imported here so the guard above can
+    # be tested with the runtime requirements alone.
+    from train_model import EncodedDataset, score
+
     torch.set_num_threads(2)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, default=ROOT / "model.pt")
+    parser.add_argument(
+        "--model",
+        type=Path,
+        required=True,
+        help="Retrained base checkpoint; its calibration is replaced in place.",
+    )
     args = parser.parse_args()
     path = args.model.resolve()
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    release_policy = release_policy_keys(checkpoint)
+    if release_policy:
+        parser.error(
+            f"{path} carries a release acceptance policy ({', '.join(release_policy)}); "
+            "this workflow would overwrite it with a single temperature. "
+            "Run it on a retrained base checkpoint such as model-retrained.pt."
+        )
     detector = LanguageDetector(path)
     config = checkpoint["config"]
     validation = EncodedDataset(
@@ -81,9 +106,13 @@ def main():
             :length
         ]
         for _ in range(30):
+            detector.clear_cache()
             detector.predict(text)
         times = []
         for _ in range(1000):
+            # predict() memoizes by text; clear it so every call is measured
+            # end to end instead of as a dictionary lookup.
+            detector.clear_cache()
             start = time.perf_counter()
             detector.predict(text)
             times.append((time.perf_counter() - start) * 1000)
@@ -105,7 +134,7 @@ def main():
             "platform": platform.platform(),
             "threads": 2,
         },
-        "protocol": "30 warmup+1000 predictions per length; encoding+network, excludes imports/loading/extraction; public/source and synthetic tests only.",
+        "protocol": "30 warmup+1000 uncached predictions per length; encoding+network, excludes imports/loading/extraction; public/source and synthetic tests only.",
         "test_sha256": hashlib.sha256(
             (ROOT / "data/prepared/test_short.csv").read_bytes()
         ).hexdigest(),
