@@ -18,10 +18,33 @@ from language_detector import build_model, encode
 ROOT = Path(__file__).resolve().parent
 
 
+def _encode_ids(job: tuple[str, dict, int]) -> bytes:
+    text, config, cap = job
+    return np.asarray(
+        encode(
+            text,
+            buckets=config["buckets"],
+            ngrams=tuple(config["ngrams"]),
+            max_length=cap,
+            word_features=config.get("word_features", False),
+            preprocessing=config.get("preprocessing", "none"),
+            word_repeat=config.get("word_repeat", 4),
+        ),
+        dtype=np.int32,
+    ).tobytes()
+
+
 class EncodedDataset:
     """Cache features on disk instead of encoding them in every epoch."""
 
-    def __init__(self, files: list[Path], languages: list[str], config: dict, cap: int):
+    def __init__(
+        self,
+        files: list[Path],
+        languages: list[str],
+        config: dict,
+        cap: int,
+        workers: int = 1,
+    ):
         signature = hashlib.sha256(
             json.dumps(
                 {"config": config, "cap": cap, "languages": languages}, sort_keys=True
@@ -34,6 +57,9 @@ class EncodedDataset:
         if not rows:
             raise ValueError("Dataset is empty.")
         lookup = {language: index for index, language in enumerate(languages)}
+        unknown = Counter(row["language"] for row in rows if row["language"] not in lookup)
+        if unknown:
+            raise ValueError(f"Labels outside the language list: {dict(unknown)}")
         self.targets = torch.tensor(
             [lookup[row["language"]] for row in rows], dtype=torch.long
         )
@@ -44,24 +70,27 @@ class EncodedDataset:
         if not ids_path.exists() or not offsets_path.exists():
             temporary = ids_path.with_suffix(".tmp")
             offsets = [0]
-            with temporary.open("wb") as stream:
-                for index, row in enumerate(rows):
-                    ids = np.asarray(
-                        encode(
-                            row["text"],
-                            buckets=config["buckets"],
-                            ngrams=tuple(config["ngrams"]),
-                            max_length=cap,
-                            word_features=config.get("word_features", False),
-                            preprocessing=config.get("preprocessing", "none"),
-                            word_repeat=config.get("word_repeat", 4),
-                        ),
-                        dtype=np.int32,
-                    )
-                    stream.write(ids.tobytes())
-                    offsets.append(offsets[-1] + len(ids))
-                    if (index + 1) % 10000 == 0:
-                        print(f"Encoding: {index + 1}/{len(rows)}", flush=True)
+            jobs = ((row["text"], config, cap) for row in rows)
+            pool = None
+            if workers > 1:
+                import multiprocessing
+
+                pool = multiprocessing.get_context("spawn").Pool(workers)
+                # imap preserves order, so the cache is identical to workers=1.
+                encoded = pool.imap(_encode_ids, jobs, chunksize=256)
+            else:
+                encoded = map(_encode_ids, jobs)
+            try:
+                with temporary.open("wb") as stream:
+                    for index, data in enumerate(encoded):
+                        stream.write(data)
+                        offsets.append(offsets[-1] + len(data) // 4)
+                        if (index + 1) % 100000 == 0:
+                            print(f"Encoding: {index + 1}/{len(rows)}", flush=True)
+            finally:
+                if pool is not None:
+                    pool.close()
+                    pool.join()
             temporary.replace(ids_path)
             np.save(offsets_path, np.asarray(offsets, dtype=np.int64))
         self.offsets = np.load(offsets_path)
@@ -78,6 +107,19 @@ class EncodedDataset:
         offsets = np.concatenate(([0], np.cumsum(ends - starts)[:-1]))
         ids = np.concatenate([self.ids[start:end] for start, end in zip(starts, ends)])
         return torch.from_numpy(ids.astype(np.int64)), torch.from_numpy(offsets)
+
+
+def temperature_row_probabilities(
+    targets: torch.Tensor, counts: list[int], alpha: float
+) -> torch.Tensor:
+    """Per-row draw probabilities giving language L a share proportional to n_L**alpha."""
+    counts_tensor = torch.tensor([float(count) for count in counts])
+    if (counts_tensor == 0).any():
+        missing = [index for index, count in enumerate(counts) if count == 0]
+        raise ValueError(f"Temperature sampling needs data for every class: {missing}")
+    share = counts_tensor**alpha
+    share /= share.sum()
+    return (share / counts_tensor)[targets]
 
 
 def score(
@@ -150,7 +192,37 @@ def main() -> None:
     parser.add_argument("--uniform-loss", action="store_true")
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--short-only", action="store_true")
+    parser.add_argument(
+        "--valid-csv",
+        type=Path,
+        action="append",
+        help="Validation CSV(s) for checkpoint selection, replacing the "
+        "data-dir valid*.csv files (e.g. FLORES dev from tools/export_flores_csv.py).",
+    )
+    parser.add_argument(
+        "--encode-workers",
+        type=int,
+        default=1,
+        help="Processes for building feature caches; output is identical.",
+    )
+    parser.add_argument(
+        "--sampling-alpha",
+        type=float,
+        help="Temperature sampling: each epoch draws rows so that language L "
+        "has probability proportional to n_L**alpha (0.3 as in NLLB/OpenLID). "
+        "Requires --uniform-loss so classes are not rebalanced twice.",
+    )
     args = parser.parse_args()
+    if args.sampling_alpha is not None:
+        if not 0 < args.sampling_alpha <= 1:
+            parser.error("--sampling-alpha must be in (0, 1].")
+        if not args.uniform_loss:
+            parser.error(
+                "--sampling-alpha already rebalances languages; pass --uniform-loss "
+                "to disable the inverse-square-root loss weights."
+            )
+    if args.encode_workers < 1:
+        parser.error("--encode-workers must be positive.")
     if (
         min(
             args.epochs,
@@ -196,14 +268,25 @@ def main() -> None:
         for suffix in suffixes
         if (args.data_dir / f"train{suffix}.csv").exists()
     ]
-    valid_files = [
+    valid_files = args.valid_csv or [
         args.data_dir / f"valid{suffix}.csv"
         for suffix in ("", "_short", "_mixed", "_ascii")
         if (args.data_dir / f"valid{suffix}.csv").exists()
     ]
     print(f"Languages: {len(languages)}; preparing feature caches...", flush=True)
-    training = EncodedDataset(train_files, languages, config, args.train_length)
-    validation = EncodedDataset(valid_files, languages, config, args.train_length)
+    training = EncodedDataset(
+        train_files, languages, config, args.train_length, args.encode_workers
+    )
+    validation = EncodedDataset(
+        valid_files, languages, config, args.train_length, args.encode_workers
+    )
+    row_probabilities = None
+    if args.sampling_alpha is not None:
+        row_probabilities = temperature_row_probabilities(
+            training.targets,
+            [training.counts[language] for language in languages],
+            args.sampling_alpha,
+        )
     model = build_model(len(languages), args.buckets, args.embedding_dim, args.hidden_dim, args.arch)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # Inverse-square-root frequency weights reduce large-language dominance.
@@ -221,7 +304,11 @@ def main() -> None:
         epoch_start = time.perf_counter()
         model.train()
         total_loss = 0.0
-        for indices in torch.randperm(len(training)).split(args.batch_size):
+        if row_probabilities is None:
+            order = torch.randperm(len(training))
+        else:
+            order = torch.multinomial(row_probabilities, len(training), replacement=True)
+        for indices in order.split(args.batch_size):
             optimizer.zero_grad(set_to_none=True)
             inputs = training.batch(indices)
             if args.dropout:
@@ -278,6 +365,8 @@ def main() -> None:
         "seed": args.seed,
         "training_samples": len(training),
         "validation_samples": len(validation),
+        "train_files": [str(path) for path in train_files],
+        "valid_files": [str(path) for path in valid_files],
         "best_epoch": best_epoch,
         "best_valid_macro_f1": best_record["valid_macro_f1"],
         "seconds": time.perf_counter() - start,

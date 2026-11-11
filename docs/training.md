@@ -52,3 +52,11 @@ The test split must be evaluated only after selecting the checkpoint. Do not cha
 Try fewer hash buckets or smaller embeddings to study the memory/accuracy tradeoff. Compare weighted accuracy, macro recall, and macro F1. Temperature calibration and optional acceptance thresholds must use validation examples; accepted accuracy must always be reported together with coverage.
 
 See [third-party notices](../THIRD_PARTY_NOTICES.md) before redistributing source text, prepared databases, or a derivative model.
+
+## Larger corpora (experimental)
+
+For multi-million-row training sets:
+
+- `--encode-workers N` builds the feature cache in N processes; the cache is byte-identical to a single-process build.
+- `--sampling-alpha 0.3 --uniform-loss` draws each epoch's rows so that a language with n rows gets a share proportional to n^0.3 (temperature sampling as in NLLB, OpenLID and GlotLID). The trainer refuses `--sampling-alpha` without `--uniform-loss`, so languages are not rebalanced twice.
+- `--valid-csv PATH` replaces the data-dir validation files for checkpoint selection. `tools/export_flores_csv.py --flores-dir … --output reports/flores_dev.csv` writes FLORES-200 **dev** (full sentences and 20/50/100-character prefixes); devtest stays reserved for reporting ([FLORES benchmark](flores-benchmark.md)).
