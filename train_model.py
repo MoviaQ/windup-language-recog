@@ -88,17 +88,37 @@ class StreamingDataset:
     def __len__(self) -> int:
         return len(self.targets)
 
-    def iter_batches(self, index_batches):
-        import multiprocessing
+    def iter_batches(self, index_batches, prefetch: int | None = None):
+        """Yield batches in order, encoding at most `prefetch` ahead.
 
-        index_batches = list(index_batches)
-        jobs = (
-            ([self.texts[i] for i in indices.tolist()], self.config, self.cap)
-            for indices in index_batches
-        )
+        Pool.imap is not used: its feeder submits every job at once, so when
+        encoding outpaces training the finished batches pile up in memory
+        (Exp D on 14.9M rows was OOM-killed at 13 GB).
+        """
+        import multiprocessing
+        from collections import deque
+
+        prefetch = prefetch or 2 * self.workers
+        if prefetch < 1:
+            raise ValueError("prefetch must be positive")
+        batches = iter(index_batches)
+        pending: deque = deque()
+        self.max_in_flight = 0
         with multiprocessing.get_context("spawn").Pool(self.workers) as pool:
-            # imap keeps batch order; it reads ahead while the model trains.
-            for indices, (ids, offsets) in zip(index_batches, pool.imap(_encode_batch, jobs)):
+
+            def submit() -> None:
+                indices = next(batches, None)
+                if indices is not None:
+                    job = ([self.texts[i] for i in indices.tolist()], self.config, self.cap)
+                    pending.append((indices, pool.apply_async(_encode_batch, (job,))))
+                    self.max_in_flight = max(self.max_in_flight, len(pending))
+
+            for _ in range(prefetch):
+                submit()
+            while pending:
+                indices, result = pending.popleft()
+                ids, offsets = result.get()
+                submit()
                 yield indices, (torch.from_numpy(ids.astype(np.int64)), torch.from_numpy(offsets))
 
 

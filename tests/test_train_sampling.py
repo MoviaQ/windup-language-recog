@@ -2,6 +2,7 @@ import unittest
 
 import csv
 import tempfile
+import time
 from pathlib import Path
 
 try:
@@ -65,9 +66,29 @@ class StreamingDatasetTests(unittest.TestCase):
             self.assertTrue(torch.equal(cached.targets, streamed.targets))
             self.assertEqual(cached.counts, streamed.counts)
             order = torch.randperm(len(cached), generator=torch.Generator().manual_seed(0)).split(6)
-            for (i1, a), (i2, b) in zip(cached.iter_batches(order), streamed.iter_batches(order)):
+            expected, got = list(cached.iter_batches(order)), list(streamed.iter_batches(order))
+            self.assertEqual(len(expected), len(got))
+            for (i1, a), (i2, b) in zip(expected, got):
                 self.assertTrue(torch.equal(i1, i2))
                 self.assertTrue(torch.equal(a[0], b[0]) and torch.equal(a[1], b[1]))
+
+    def test_streaming_prefetch_is_bounded(self):
+        rows = [(f"Zdanie numer {i} jest po polsku.", "pl") for i in range(400)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "train.csv"
+            with path.open("w", encoding="utf-8", newline="") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(["text", "language"])
+                writer.writerows(rows)
+            streamed = StreamingDataset([path], ["pl"], self.CONFIG, 384, workers=2)
+            seen = []
+            for indices, _ in streamed.iter_batches(torch.arange(len(streamed)).split(4), prefetch=3):
+                time.sleep(0.002)  # consumer slower than the encoders
+                seen.append(indices)
+            self.assertEqual(torch.cat(seen).tolist(), list(range(len(rows))))
+            self.assertEqual(streamed.max_in_flight, 3)
+            with self.assertRaises(ValueError):
+                next(streamed.iter_batches(torch.arange(4).split(2), prefetch=-1))
 
     def test_cache_key_ignores_model_size(self):
         bigger = dict(self.CONFIG, embedding_dim=64, hidden_dim=256, arch="linear")
