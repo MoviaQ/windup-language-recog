@@ -2,6 +2,7 @@
 
 import argparse
 import copy
+import csv
 import hashlib
 import json
 import time
@@ -34,6 +35,73 @@ def _encode_ids(job: tuple[str, dict, int]) -> bytes:
     ).tobytes()
 
 
+def encoding_config(config: dict) -> dict:
+    """The config keys that change encode() output (not model size or arch)."""
+    return {
+        "buckets": config["buckets"],
+        "ngrams": list(config["ngrams"]),
+        "word_features": config.get("word_features", False),
+        "preprocessing": config.get("preprocessing", "none"),
+        "word_repeat": config.get("word_repeat", 4),
+    }
+
+
+def _encode_batch(job: tuple[list[str], dict, int]) -> tuple[np.ndarray, np.ndarray]:
+    texts, config, cap = job
+    pieces = [np.frombuffer(_encode_ids((text, config, cap)), dtype=np.int32) for text in texts]
+    lengths = np.fromiter((len(piece) for piece in pieces), dtype=np.int64, count=len(pieces))
+    offsets = np.concatenate(([0], np.cumsum(lengths)[:-1]))
+    return np.concatenate(pieces), offsets
+
+
+class StreamingDataset:
+    """Encode every batch on the fly in worker processes; nothing is cached.
+
+    For corpora whose feature cache would not fit on disk. Encoding is
+    deterministic, so a given row order gives the same batches as
+    EncodedDataset.
+    """
+
+    def __init__(self, files: list[Path], languages: list[str], config: dict, cap: int, workers: int):
+        lookup = {language: index for index, language in enumerate(languages)}
+        self.texts: list[str] = []
+        targets: list[int] = []
+        unknown: Counter = Counter()
+        for file in files:
+            with file.open(encoding="utf-8", newline="") as stream:
+                reader = csv.DictReader(stream)
+                for row in reader:
+                    index = lookup.get(row["language"])
+                    if index is None:
+                        unknown[row["language"]] += 1
+                        continue
+                    self.texts.append(row["text"])
+                    targets.append(index)
+        if unknown:
+            raise ValueError(f"Labels outside the language list: {dict(unknown)}")
+        if not self.texts:
+            raise ValueError("Dataset is empty.")
+        self.targets = torch.tensor(targets, dtype=torch.long)
+        self.counts = Counter({languages[i]: c for i, c in Counter(targets).items()})
+        self.config, self.cap, self.workers = config, cap, workers
+
+    def __len__(self) -> int:
+        return len(self.targets)
+
+    def iter_batches(self, index_batches):
+        import multiprocessing
+
+        index_batches = list(index_batches)
+        jobs = (
+            ([self.texts[i] for i in indices.tolist()], self.config, self.cap)
+            for indices in index_batches
+        )
+        with multiprocessing.get_context("spawn").Pool(self.workers) as pool:
+            # imap keeps batch order; it reads ahead while the model trains.
+            for indices, (ids, offsets) in zip(index_batches, pool.imap(_encode_batch, jobs)):
+                yield indices, (torch.from_numpy(ids.astype(np.int64)), torch.from_numpy(offsets))
+
+
 class EncodedDataset:
     """Cache features on disk instead of encoding them in every epoch."""
 
@@ -47,7 +115,8 @@ class EncodedDataset:
     ):
         signature = hashlib.sha256(
             json.dumps(
-                {"config": config, "cap": cap, "languages": languages}, sort_keys=True
+                {"encoding": encoding_config(config), "cap": cap, "languages": languages},
+                sort_keys=True,
             ).encode()
         )
         rows = []
@@ -100,6 +169,10 @@ class EncodedDataset:
 
     def __len__(self) -> int:
         return len(self.targets)
+
+    def iter_batches(self, index_batches):
+        for indices in index_batches:
+            yield indices, self.batch(indices)
 
     def batch(self, indices: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         selected = indices.numpy()
@@ -215,6 +288,13 @@ def main() -> None:
         help="Processes for building feature caches; output is identical.",
     )
     parser.add_argument(
+        "--stream-workers",
+        type=int,
+        default=0,
+        help="Encode training batches on the fly in N processes instead of "
+        "building a disk cache (for corpora whose cache does not fit on disk).",
+    )
+    parser.add_argument(
         "--sampling-alpha",
         type=float,
         help="Temperature sampling: each epoch draws rows so that language L "
@@ -232,6 +312,8 @@ def main() -> None:
             )
     if args.encode_workers < 1:
         parser.error("--encode-workers must be positive.")
+    if args.stream_workers < 0:
+        parser.error("--stream-workers must be zero (cache) or positive.")
     if (
         min(
             args.epochs,
@@ -283,9 +365,14 @@ def main() -> None:
         if (args.data_dir / f"valid{suffix}.csv").exists()
     ]
     print(f"Languages: {len(languages)}; preparing feature caches...", flush=True)
-    training = EncodedDataset(
-        train_files, languages, config, args.train_length, args.encode_workers
-    )
+    if args.stream_workers:
+        training = StreamingDataset(
+            train_files, languages, config, args.train_length, args.stream_workers
+        )
+    else:
+        training = EncodedDataset(
+            train_files, languages, config, args.train_length, args.encode_workers
+        )
     validation = EncodedDataset(
         valid_files, languages, config, args.train_length, args.encode_workers
     )
@@ -317,9 +404,8 @@ def main() -> None:
             order = torch.randperm(len(training))
         else:
             order = torch.multinomial(row_probabilities, len(training), replacement=True)
-        for indices in order.split(args.batch_size):
+        for indices, inputs in training.iter_batches(order.split(args.batch_size)):
             optimizer.zero_grad(set_to_none=True)
-            inputs = training.batch(indices)
             if args.dropout:
                 keep = torch.rand(len(inputs[0])) >= args.dropout
                 # Keep at least the first feature of each input.

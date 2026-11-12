@@ -1,8 +1,17 @@
 import unittest
 
+import csv
+import tempfile
+from pathlib import Path
+
 try:
     import torch
-    from train_model import temperature_row_probabilities
+    from train_model import (
+        EncodedDataset,
+        StreamingDataset,
+        encoding_config,
+        temperature_row_probabilities,
+    )
 except ImportError as error:  # numpy is a training-only dependency
     temperature_row_probabilities = None
     IMPORT_ERROR = error
@@ -29,6 +38,41 @@ class TemperatureSamplingTests(unittest.TestCase):
     def test_missing_class_is_refused(self):
         with self.assertRaises(ValueError):
             temperature_row_probabilities(torch.tensor([0]), [1, 0], 0.3)
+
+
+@unittest.skipIf(
+    temperature_row_probabilities is None,
+    "train_model needs requirements-training.txt (numpy)",
+)
+class StreamingDatasetTests(unittest.TestCase):
+    CONFIG = {
+        "buckets": 4096, "ngrams": [1, 2, 3], "word_features": True,
+        "preprocessing": "ticket_v2", "embedding_dim": 16, "arch": "mlp",
+    }
+
+    def test_streaming_batches_equal_cached_batches(self):
+        rows = [("Dzień dobry, jak się masz?", "pl"), ("Good morning, how are you?", "en"),
+                ("Guten Morgen, wie geht es?", "de"), ("Ahoj, jak se máš dnes?", "cs")] * 5
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "train.csv"
+            with path.open("w", encoding="utf-8", newline="") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(["text", "language"])
+                writer.writerows(rows)
+            languages = ["cs", "de", "en", "pl"]
+            cached = EncodedDataset([path], languages, self.CONFIG, 384)
+            streamed = StreamingDataset([path], languages, self.CONFIG, 384, workers=2)
+            self.assertTrue(torch.equal(cached.targets, streamed.targets))
+            self.assertEqual(cached.counts, streamed.counts)
+            order = torch.randperm(len(cached), generator=torch.Generator().manual_seed(0)).split(6)
+            for (i1, a), (i2, b) in zip(cached.iter_batches(order), streamed.iter_batches(order)):
+                self.assertTrue(torch.equal(i1, i2))
+                self.assertTrue(torch.equal(a[0], b[0]) and torch.equal(a[1], b[1]))
+
+    def test_cache_key_ignores_model_size(self):
+        bigger = dict(self.CONFIG, embedding_dim=64, hidden_dim=256, arch="linear")
+        self.assertEqual(encoding_config(self.CONFIG), encoding_config(bigger))
+        self.assertNotEqual(encoding_config(self.CONFIG), encoding_config(dict(self.CONFIG, buckets=8192)))
 
 
 if __name__ == "__main__":
