@@ -69,7 +69,7 @@ from typing import Callable, Iterable, Iterator
 import ftfy
 import numpy as np
 
-from dataset_utils import read_csv, text_key, write_csv
+from dataset_utils import read_csv, text_key
 from ticket_text import normalize_ticket_text
 
 ROOT = Path(__file__).resolve().parent
@@ -641,6 +641,7 @@ class HashedStream(io.RawIOBase):
         self.url = url
         self.digest = hashlib.sha256()
         self.offset = 0
+        self.response = None  # set before the request so close() works if it raises
         self.response = _request(url)
         self.total = self.response.headers.get("Content-Length")
 
@@ -665,7 +666,8 @@ class HashedStream(io.RawIOBase):
 
     def close(self):
         try:
-            self.response.close()
+            if self.response is not None:
+                self.response.close()
         finally:
             super().close()
 
@@ -1314,9 +1316,20 @@ def collect_language(label: str) -> dict:
     hashes = np.array([key_hash(text_key(text)) for _, _, text in rows], dtype=np.int64)
     np.save(work / f"{label}.npy", hashes)
     print(f"[collect] {label}: {len(rows)} candidates {dict(got)} in {time.time() - started:.0f}s", flush=True)
-    return {"label": label, "candidates": dict(got), "by_source": dict(by_source),
-            "drops": dict(stats), "lock": lock.records, "errors": errors,
-            "seconds": round(time.time() - started, 1)}
+    result = {"label": label, "candidates": dict(got), "by_source": dict(by_source),
+              "drops": dict(stats), "lock": lock.records, "errors": errors,
+              "seconds": round(time.time() - started, 1)}
+    # Written last and renamed into place: its presence marks the label complete for --resume.
+    partial = work / f"{label}.json.partial"
+    partial.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    partial.replace(work / f"{label}.json")
+    return result
+
+
+def collect_signature(args: argparse.Namespace) -> dict:
+    """Every option that can change collected candidates (not output paths or worker count)."""
+    ignored = {"out", "workers", "resume"}
+    return {k: (str(v) if isinstance(v, Path) else v) for k, v in sorted(vars(args).items()) if k not in ignored}
 
 
 def select_language(label: str) -> dict:
@@ -1416,9 +1429,86 @@ def select_language(label: str) -> dict:
                 made += crops_from(train_parents, need - made, split)
         if made < need:
             stats[f"crop_shortfall:{split}"] += need - made
-    return {"label": label, "rows": out, "drops": dict(stats),
+    # Rows stay on disk: returning them to the parent held every selected row of
+    # every label in one process (OOM-killed at --cap 150000, 13 GB RSS).
+    write_selection(ctx["work"] / "sel" / f"{label}.tsv", out)
+    crop_hashes = np.array([r[4] for rows in out.values() for r in rows if r[0] == "crop"], dtype=np.int64)
+    return {"label": label, "crop_hashes": crop_hashes, "drops": dict(stats),
             "alloc": alloc, "available": available,
             "targets": {"sentences": sentence_need, "crops": crop_need}}
+
+
+SELECTION_FIELDS = 6  # split, kind, domain, source, hash, text (text last: it has no tabs)
+
+
+def write_selection(path: Path, out: dict[str, list[tuple]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for split, rows in out.items():
+            for kind, domain, name, text, hashed in rows:
+                handle.write(f"{split}\t{kind}\t{domain}\t{name}\t{hashed}\t{text}\n")
+
+
+def read_selection(path: Path) -> dict[str, list[tuple]]:
+    out: dict[str, list[tuple]] = defaultdict(list)
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            fields = line.rstrip("\n").split("\t", SELECTION_FIELDS - 1)
+            if len(fields) != SELECTION_FIELDS:
+                raise ValueError(f"{path}: malformed selection row {line[:80]!r}")
+            split, kind, domain, name, hashed, text = fields
+            out[split].append((kind, domain, name, text, int(hashed)))
+    return out
+
+
+class ShuffledWriter:
+    """Seeded global shuffle without holding all rows: random key -> bucket file -> sort."""
+
+    BUCKET_BITS = 6
+
+    def __init__(self, directory: Path, seed: str):
+        self.directory = directory
+        directory.mkdir(parents=True, exist_ok=True)
+        self.rng = random.Random(seed)
+        self.handles = [(directory / f"{i:02d}.tsv").open("w", encoding="utf-8")
+                        for i in range(1 << self.BUCKET_BITS)]
+        self.count = 0
+
+    def add(self, language: str, kind: str, domain: str, source: str, text: str) -> None:
+        key = self.rng.getrandbits(64)
+        self.handles[key >> (64 - self.BUCKET_BITS)].write(
+            f"{key}\t{language}\t{kind}\t{domain}\t{source}\t{text}\n")
+        self.count += 1
+
+    def discard(self) -> None:
+        for handle in self.handles:
+            handle.close()
+            Path(handle.name).unlink()
+
+    def finish(self, csv_path: Path, sidecar_path: Path) -> int:
+        for handle in self.handles:
+            handle.close()
+        written = 0
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", encoding="utf-8", newline="") as data, \
+                sidecar_path.open("w", encoding="utf-8", newline="") as side:
+            rows = csv.DictWriter(data, fieldnames=["text", "language"])
+            meta = csv.DictWriter(side, fieldnames=["language", "kind", "domain", "source"], delimiter="\t")
+            rows.writeheader()
+            meta.writeheader()
+            for handle in self.handles:
+                path = Path(handle.name)
+                with path.open(encoding="utf-8") as bucket:
+                    entries = [line.rstrip("\n").split("\t", 5) for line in bucket]
+                entries.sort(key=lambda e: int(e[0]))
+                for _, language, kind, domain, source, text in entries:
+                    rows.writerow({"text": text, "language": language})
+                    meta.writerow({"language": language, "kind": kind, "domain": domain, "source": source})
+                written += len(entries)
+                path.unlink()
+        if written != self.count:
+            raise RuntimeError(f"shuffle lost rows: wrote {written}, added {self.count}")
+        return written
 
 
 # --------------------------------------------------------------------------
@@ -1474,6 +1564,9 @@ def main(argv: list[str] | None = None) -> None:
                         help="Do not use WiLI/MASSIVE (their test splits are then NOT filtered out).")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=945)
+    parser.add_argument("--resume", action="store_true",
+                        help="Reuse labels already collected in <raw-dir>/work by a run with identical "
+                             "collection options; refuses if the options differ.")
     args = parser.parse_args(argv)
     mix = {k: float(v) for k, v in (item.split("=") for item in args.mix.split(","))}
     if set(mix) != set(DOMAINS) or abs(sum(mix.values()) - 1) > 1e-6:
@@ -1495,9 +1588,28 @@ def main(argv: list[str] | None = None) -> None:
         labels = requested
     args.raw_dir.mkdir(parents=True, exist_ok=True)
     work = args.raw_dir / "work"
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
+    signature = collect_signature(args)
+    done: dict[str, dict] = {}
+    if args.resume:
+        stored_path = work / "config.json"
+        if not stored_path.exists():
+            parser.error(f"--resume: {stored_path} not found (no resumable run)")
+        stored = json.loads(stored_path.read_text(encoding="utf-8"))
+        if stored != signature:
+            changed = sorted(k for k in set(stored) | set(signature) if stored.get(k) != signature.get(k))
+            parser.error(f"--resume: collection options differ from the stored run: {changed}")
+        for label in labels:
+            path = work / "cand" / f"{label}.json"
+            if path.exists():
+                done[label] = json.loads(path.read_text(encoding="utf-8"))
+        for stale in ("sel", "shuffle"):
+            shutil.rmtree(work / stale, ignore_errors=True)
+        print(f"[resume] {len(done)} of {len(labels)} labels already collected", flush=True)
+    else:
+        if work.exists():
+            shutil.rmtree(work)
+        work.mkdir(parents=True)
+        (work / "config.json").write_text(json.dumps(signature, indent=1), encoding="utf-8")
     global_lock: list[dict] = []
     flores_dir = ensure_flores(args.raw_dir, args.flores_dir, global_lock)
     print("[index] FLORES-200 ...", flush=True)
@@ -1525,7 +1637,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     context = multiprocessing.get_context("fork")  # indexes are shared copy-on-write
     with context.Pool(args.workers) as pool:
-        collected = {r["label"]: r for r in pool.imap_unordered(collect_language, labels)}
+        pending = [label for label in labels if label not in done]
+        collected = dict(done)
+        collected.update({r["label"]: r for r in pool.imap_unordered(collect_language, pending)})
     print(f"[collect] done in {time.time() - started:.0f}s", flush=True)
 
     label_index = {label: i for i, label in enumerate(labels)}
@@ -1543,20 +1657,20 @@ def main(argv: list[str] | None = None) -> None:
     # Phase D: crops and sentences must not share a key with any other label.
     pair_h, pair_l = [np.concatenate(hashes)], [np.concatenate(owners)]
     for label in labels:
-        for split_rows in selected[label]["rows"].values():
-            values = np.array([r[4] for r in split_rows if r[0] == "crop"], dtype=np.int64)
-            pair_h.append(values)
-            pair_l.append(np.full(values.size, label_index[label], dtype=np.int64))
+        values = selected[label]["crop_hashes"]
+        pair_h.append(values)
+        pair_l.append(np.full(values.size, label_index[label], dtype=np.int64))
     final_conflicts = cross_label_conflicts(np.concatenate(pair_h), np.concatenate(pair_l))
     blocked = set(final_conflicts.tolist())
-    outputs: dict[str, list[dict]] = {"train": [], "valid": [], "negatives": []}
-    meta: dict[str, list[dict]] = {"train": [], "valid": [], "negatives": []}
+    del pair_h, pair_l, hashes, owners
+    writers = {name: ShuffledWriter(work / "shuffle" / name, f"{args.seed}:{name}")
+               for name in ("train", "valid", "negatives")}
     report: dict[str, dict] = {}
     for label in labels:
         result = selected[label]
         drops = Counter(collected[label]["drops"]) + Counter(result["drops"])
         counts = {}
-        for split, rows in result["rows"].items():
+        for split, rows in read_selection(work / "sel" / f"{label}.tsv").items():
             target = result["targets"]["sentences"][split] + result["targets"]["crops"][split]
             kept_sent, kept_crop = [], []
             for row in rows:
@@ -1577,8 +1691,7 @@ def main(argv: list[str] | None = None) -> None:
             drops[f"spare_unused:{split}"] += len(kept_sent) + len(kept_crop) - len(final)
             destination = "negatives" if label in NEGATIVE_LABELS else split
             for kind, domain, name, text, _ in final:
-                outputs[destination].append({"text": text, "language": label})
-                meta[destination].append({"language": label, "kind": kind, "domain": domain, "source": name})
+                writers[destination].add(label, kind, domain, name, text)
             counts[split] = {
                 "rows": len(final), "target": target,
                 "crops": sum(1 for r in final if r[0] == "crop"),
@@ -1595,14 +1708,15 @@ def main(argv: list[str] | None = None) -> None:
             "collect_seconds": collected[label]["seconds"],
         }
     args.out.mkdir(parents=True, exist_ok=True)
+    written = {}
     for split in ("train", "valid"):
-        order = list(range(len(outputs[split])))
-        random.Random(f"{args.seed}:{split}").shuffle(order)
-        write_csv(args.out / f"{split}.csv", [outputs[split][i] for i in order])
-        write_sidecar(args.out / f"{split}_sources.tsv", [meta[split][i] for i in order])
-    if outputs["negatives"]:
-        write_csv(args.out / "negatives" / "nn.csv", outputs["negatives"])
-        write_sidecar(args.out / "negatives" / "nn_sources.tsv", meta["negatives"])
+        written[split] = writers[split].finish(args.out / f"{split}.csv", args.out / f"{split}_sources.tsv")
+    written["negatives"] = 0
+    if writers["negatives"].count:
+        written["negatives"] = writers["negatives"].finish(
+            args.out / "negatives" / "nn.csv", args.out / "negatives" / "nn_sources.tsv")
+    else:
+        writers["negatives"].discard()
     lock_records = global_lock + [r for label in labels for r in collected[label]["lock"]]
     totals = Counter()
     for label in labels:
@@ -1643,16 +1757,8 @@ def main(argv: list[str] | None = None) -> None:
     }
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     shutil.rmtree(work)
-    print(f"[done] train {len(outputs['train'])} valid {len(outputs['valid'])} "
-          f"negatives {len(outputs['negatives'])} in {time.time() - started:.0f}s", flush=True)
-
-
-def write_sidecar(path: Path, rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["language", "kind", "domain", "source"], delimiter="\t")
-        writer.writeheader()
-        writer.writerows(rows)
+    print(f"[done] train {written['train']} valid {written['valid']} "
+          f"negatives {written['negatives']} in {time.time() - started:.0f}s", flush=True)
 
 
 if __name__ == "__main__":

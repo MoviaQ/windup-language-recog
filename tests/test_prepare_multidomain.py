@@ -218,5 +218,85 @@ class FilterTest(unittest.TestCase):
         self.assertTrue(all(len(p) <= 300 for p in prep.split_segments(long, 300)))
 
 
+class OnDiskOutputTest(unittest.TestCase):
+    def test_selection_round_trip(self):
+        out = {"train": [("sentence", "web", "src/a", "Zdanie numer jeden.", -5),
+                         ("crop", "crop/web", "src/a", "Zdanie", 2 ** 62)],
+               "valid": [("sentence", "wiki", "src/b", "Ein Satz mit\u00a0Leerzeichen.", 7)]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sel" / "pl.tsv"
+            prep.write_selection(path, out)
+            self.assertEqual(dict(prep.read_selection(path)), out)
+            path.write_text("train\tsentence\tweb\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                prep.read_selection(path)
+
+    def test_shuffled_writer_is_seeded_permutation(self):
+        rows = [(f"l{i % 3}", "sentence", "web", f"s{i}", f"text {i}") for i in range(5000)]
+
+        def build(directory: Path, seed: str) -> list[str]:
+            writer = prep.ShuffledWriter(directory / "shuffle", seed)
+            for row in rows:
+                writer.add(*row)
+            self.assertEqual(writer.finish(directory / "out.csv", directory / "out.tsv"), len(rows))
+            self.assertEqual(list((directory / "shuffle").iterdir()), [])
+            data = (directory / "out.csv").read_text(encoding="utf-8").splitlines()
+            side = (directory / "out.tsv").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(data[0], "text,language")
+            self.assertEqual(side[0], "language\tkind\tdomain\tsource")
+            # The sidecar row describes the data row at the same position.
+            for line, meta in zip(data[1:], side[1:]):
+                text, language = line.rsplit(",", 1)
+                index = int(text.split()[1])
+                self.assertEqual(language, rows[index][0])
+                self.assertEqual(meta.split("\t")[3], rows[index][3])
+            return data[1:]
+
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second, \
+                tempfile.TemporaryDirectory() as third:
+            a = build(Path(first), "0:train")
+            b = build(Path(second), "0:train")
+            c = build(Path(third), "1:train")
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, c)
+        self.assertEqual(sorted(a), sorted(f"text {i},l{i % 3}" for i in range(len(rows))))
+        self.assertNotEqual(a, [f"text {i},l{i % 3}" for i in range(len(rows))])
+
+    def test_hashed_stream_close_after_failed_request(self):
+        original = prep._request
+        prep._request = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("giving up"))
+        try:
+            with self.assertRaises(RuntimeError):
+                prep.HashedStream("https://example.invalid/x")
+            stream = prep.HashedStream.__new__(prep.HashedStream)
+            stream.response = None
+            stream.close()  # must not raise AttributeError
+        finally:
+            prep._request = original
+
+
+class ResumeTest(unittest.TestCase):
+    def run_main(self, raw: Path, *extra: str):
+        return prep.main(["--raw-dir", str(raw), "--flores-dir", str(raw / "no-flores"),
+                          "--languages", "pl", "--skip-public", *extra])
+
+    def test_resume_refuses_without_or_with_different_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            raw = Path(directory)
+            with self.assertRaises(SystemExit):
+                self.run_main(raw, "--resume")
+            # A fresh run stores its options before collecting (it then stops at the missing FLORES).
+            with self.assertRaisesRegex(ValueError, "expected 204 FLORES files"):
+                self.run_main(raw, "--cap", "100")
+            stored = json.loads((raw / "work" / "config.json").read_text())
+            self.assertEqual(stored["cap"], 100)
+            self.assertNotIn("workers", stored)
+            with self.assertRaises(SystemExit):
+                self.run_main(raw, "--cap", "200", "--resume")
+            # Matching options pass the check; workers may differ.
+            with self.assertRaisesRegex(ValueError, "expected 204 FLORES files"):
+                self.run_main(raw, "--cap", "100", "--workers", "1", "--resume")
+
+
 if __name__ == "__main__":
     unittest.main()
