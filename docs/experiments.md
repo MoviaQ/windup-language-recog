@@ -154,3 +154,57 @@ Every other slice is within ±0.005 pp with p ≥ 0.27. For fp16 every slice is 
 - Only the Exp A single MLP was compressed. `model.pt` (ensemble with a calibrated acceptance policy) is refused, and its `und` behaviour under compression was not measured.
 - Smaller RAM would need int8 or float16 kept in memory (an embedding-bag kernel on quantized weights). That was not tried.
 - Load times and RSS come from one machine with a competing job. Support-ticket diagnostics were not rerun.
+
+## Exp C: embedding size sweep
+
+**Question.** Can a smaller hash table or a narrower embedding keep Exp A's accuracy?
+
+**Setup.**
+- Same data (`data/prepared_v2`), architecture (single MLP, hidden 128, n-grams 1–5 plus words, `ticket_v2`) and optimiser as Exp A.
+- Only `--buckets` and `--embedding-dim` change. Each run trains for `--epochs 4 --patience 2`.
+- The epoch is chosen on FLORES dev only; all three runs picked epoch 2. Devtest was then evaluated once per checkpoint with `tools/evaluate_flores.py --split devtest --extra-variants`.
+- The paired difference against Exp A (bootstrap over sentences, McNemar) uses the per-item predictions of both models.
+
+| Run | Buckets × dim | Parameters | File (fp32) | Dev acc. | Devtest full | Devtest ≤20 | Devtest >100 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Exp A | 131,072 × 64 | 8.41 M | 34.0 MB | 96.27 | 99.14 | 89.63 | 99.25 |
+| C1 | 65,536 × 64 | 4.22 M | 17.3 MB | 96.02 | 99.05 | 89.05 | 99.16 |
+| C2 | 131,072 × 32 | 4.21 M | 17.2 MB | 96.17 | 99.09 | 89.24 | 99.21 |
+| C3 | 262,144 × 32 | 8.41 M | 34.0 MB | 96.33 | 99.05 | 89.86 | 99.13 |
+
+**Paired difference against Exp A (devtest, pp):**
+
+| Run | full | ≤20 | >100 |
+|---|---|---|---|
+| C1 | −0.09 (−0.14..−0.04), p=0.001 | −0.59 (−0.74..−0.42), p=3e-12 | −0.08 (−0.14..−0.02), p=0.006 |
+| C2 | −0.04 (−0.10..+0.00), p=0.08 | −0.39 (−0.55..−0.23), p=3e-6 | −0.04 (−0.09..+0.02), p=0.2 |
+| C3 | −0.09 (−0.14..−0.04), p=0.001 | +0.23 (+0.07..+0.40), p=0.006 | −0.11 (−0.17..−0.06), p=2e-4 |
+
+**Paired difference against NLLB lid218e, restricted mapping (devtest, pp).** Exp A was +0.01 full and +0.26 on ≤20.
+
+| Run | full | ≤20 |
+|---|---|---|
+| C1 | −0.07 (−0.13..−0.01), p=0.03 | −0.33 (−0.53..−0.13), p=0.001 |
+| C2 | −0.03 (−0.09..+0.03), p=0.33 | −0.13 (−0.34..+0.06), p=0.18 |
+| C3 | −0.07 (−0.14..−0.01), p=0.02 | +0.49 (+0.30..+0.68), p=8.5e-7 |
+
+**Latency.** Single-thread median `predict` on the 2,000-text sample, cache cleared before each call. The data build was running on the same machine, so the numbers are noisy.
+
+| Run | Median `predict` |
+|---|---:|
+| Exp A | 0.41 ms |
+| C1 | 0.40 ms |
+| C2 | 0.52 ms |
+| C3 | 0.35 ms |
+
+Feature hashing dominates the time, so model size does not measurably change latency.
+
+**Reading.**
+- Halving the model costs short-text accuracy either way. Halving the buckets (C1) costs more than halving the width (C2); C1 falls significantly below NLLB.
+- To make the model smaller, int8 storage of Exp A (Exp B: 9.4 MB, ≤0.03 pp) is clearly better than a smaller architecture.
+- Trading width for buckets (C3) improves short text significantly (+0.23 pp vs Exp A, +0.49 pp vs NLLB) but loses 0.1 pp on long text. It is a length trade-off, not a free gain.
+- The trade-off points toward more buckets for short inputs. It also motivates separate word and char bags, so words do not share the char-n-gram table. Both are untested.
+
+**Caveats.**
+- One seed per configuration; seed variance was not measured. Differences of about 0.05 pp on the full slice may be within it.
+- 4 epochs, selected at epoch 2 in every run. All runs overfit after epoch 2, as Exp A did.
