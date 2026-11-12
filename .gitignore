@@ -12,5 +12,5 @@ reports/
 dist/
 build/
 *.egg-info/
-data/prepared_v2/
+data/prepared_v*/
 data/raw_multidomain/
