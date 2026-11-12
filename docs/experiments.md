@@ -76,3 +76,81 @@ Measured on 2,000 FLORES texts, single thread, with the cache cleared before eve
 | Exp A | 34.0 MB | 8.41 M | 0.46 ms |
 
 In both models, 99.7% of the parameters are the 131,072 × 64 embedding table.
+
+## Exp B: post-training compression of Exp A
+
+- **Question:** how much smaller can the Exp A checkpoint get without retraining, and what does it cost on FLORES?
+- **Method:** `tools/compress_checkpoint.py` rewrites the weights and records `config["weight_storage"]`. `model_from_checkpoint` restores float32 weights at load, so the inference code is unchanged. A checkpoint without the key loads exactly as before, and an unknown value raises.
+  - `fp16`: every tensor stored as float16.
+  - `int8_rowwise`: the 131,072 × 64 embedding stored as int8 with a symmetric float32 scale per row (`max |w| / 127`). The small hidden and classifier layers stay float32.
+- **Scope:** single-model checkpoints only. The tool refuses ensemble checkpoints such as the bundled `model.pt`, refuses already compressed input and never overwrites a file.
+
+```bash
+.venv/bin/python tools/compress_checkpoint.py --input reports/exp_a/model-exp-a.pt \
+  --output reports/exp_b/model-exp-a-fp16.pt --storage fp16
+.venv/bin/python tools/compress_checkpoint.py --input reports/exp_a/model-exp-a.pt \
+  --output reports/exp_b/model-exp-a-int8_rowwise.pt --storage int8_rowwise
+# for each checkpoint and for --split dev and devtest
+.venv/bin/python tools/evaluate_flores.py --flores-dir <flores200_dataset> --split devtest \
+  --model reports/exp_b/model-exp-a-int8_rowwise.pt --extra-variants --workers 2 \
+  --output reports/exp_b/flores_devtest_int8_rowwise.json \
+  --predictions-out reports/exp_b/flores_devtest_int8_rowwise.predictions.jsonl
+```
+
+The float32 devtest rerun gave the same prediction as the Exp A record for all 378,502 items.
+
+**FLORES, accuracy / macro F1 in percent.** Dev was used to check the variants. Devtest is reported once.
+
+| Split | Slice | fp32 (Exp A) | fp16 | int8_rowwise |
+|---|---|---|---|---|
+| dev | full | 99.14 / 99.13 | 99.14 / 99.13 | 99.14 / 99.13 |
+| dev | ≤20 | 89.81 / 89.81 | 89.81 / 89.81 | 89.81 / 89.81 |
+| dev | 21–50 | 97.96 / 97.94 | 97.96 / 97.94 | 97.96 / 97.95 |
+| dev | 51–100 | 99.00 / 99.01 | 99.00 / 99.01 | 99.00 / 99.00 |
+| dev | >100 | 99.24 / 99.21 | 99.24 / 99.21 | 99.24 / 99.21 |
+| devtest | full | 99.14 / 99.12 | 99.14 / 99.12 | 99.14 / 99.12 |
+| devtest | ≤20 | 89.63 / 89.64 | 89.63 / 89.64 | 89.66 / 89.66 |
+| devtest | 21–50 | 98.04 / 98.03 | 98.04 / 98.03 | 98.04 / 98.02 |
+| devtest | 51–100 | 99.01 / 99.01 | 99.01 / 99.01 | 99.01 / 99.01 |
+| devtest | >100 | 99.25 / 99.23 | 99.25 / 99.23 | 99.25 / 99.23 |
+
+**Agreement with fp32 per item.** Counts cover all items, including the `--extra-variants` items.
+
+| Split | Variant | Items | Different predictions | Agreement |
+|---|---|---:|---:|---:|
+| dev | fp16 | 370,720 | 6 | 99.998% |
+| dev | int8_rowwise | 370,720 | 90 | 99.976% |
+| devtest | fp16 | 378,502 | 6 | 99.998% |
+| devtest | int8_rowwise | 378,502 | 110 | 99.971% |
+
+**Paired accuracy difference, int8_rowwise minus fp32** (`paired_comparison`: bootstrap over sentences, McNemar):
+
+| Split | Slice | Difference | 95% interval | int8-only / fp32-only correct | McNemar p |
+|---|---|---:|---|---:|---:|
+| dev | full | +0.000 pp | −0.005 .. +0.005 | 3 / 3 | 1 |
+| dev | ≤20 | +0.000 pp | −0.012 .. +0.012 | 20 / 20 | 1 |
+| devtest | full | +0.000 pp | −0.005 .. +0.006 | 4 / 4 | 1 |
+| devtest | ≤20 | +0.021 pp | +0.007 .. +0.036 | 38 / 17 | 0.007 |
+
+Every other slice is within ±0.005 pp with p ≥ 0.27. For fp16 every slice is within ±0.002 pp and p ≥ 0.48.
+
+**Size, load and latency.** Measured with one torch thread while another training job used the same 4-core machine, so absolute times are noisy.
+
+| Variant | File size | Load time (median of 5 reloads, 3 processes) | RSS growth at load | Peak RSS after the first load | Median `predict`, interleaved |
+|---|---:|---|---:|---:|---:|
+| fp32 | 34.0 MB | 0.12–0.13 s | 37.5 MB | 581 MB | 0.452 ms |
+| fp16 | 17.2 MB (−49%) | 0.12–0.18 s | 37.9 MB | 598 MB | 0.432 ms |
+| int8_rowwise | 9.4 MB (−72%) | 0.17–0.20 s | 39.0 MB | 623 MB | 0.422 ms |
+
+- Latency comes from 2,000 FLORES texts, three rounds, with all three detectors in one process and each call interleaved across them, cache cleared before every call. The per-process runs gave medians from 0.39 to 0.69 ms with no consistent order.
+- Interpreter and torch account for about 512 MB of the RSS.
+
+**Reading.**
+- fp16 halves the file and int8_rowwise cuts it by 72%. Neither changes accuracy or macro F1 by more than 0.03 pp on any slice.
+- The +0.021 pp for int8 on devtest ≤20 is 55 discordant items out of 101,200. Dev shows 0.000 pp, so it is not evidence that quantization helps.
+- **RAM does not shrink.** The weights are dequantized to float32 at load, so resident memory and latency stay as they are for fp32. The load peak is 17–42 MB higher because of the temporary copy.
+
+**Caveats.**
+- Only the Exp A single MLP was compressed. `model.pt` (ensemble with a calibrated acceptance policy) is refused, and its `und` behaviour under compression was not measured.
+- Smaller RAM would need int8 or float16 kept in memory (an embedding-bag kernel on quantized weights). That was not tried.
+- Load times and RSS come from one machine with a competing job. Support-ticket diagnostics were not rerun.

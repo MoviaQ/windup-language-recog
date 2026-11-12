@@ -182,10 +182,80 @@ class LanguageModelEnsemble(nn.Module):
     def forward(self, ids, offsets):
         return self.forward_with_agreement(ids, offsets)[0]
 
+WEIGHT_STORAGES = ("fp32", "fp16", "int8_rowwise")
+ROW_SCALE_SUFFIX = ".__row_scale"
+
+
+def quantize_rowwise_int8(weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Symmetric per-row int8: weight ~= values * scale, values in [-127, 127]."""
+    if weight.dim() != 2 or not weight.is_floating_point():
+        raise ValueError("Row-wise int8 needs a 2-D floating-point tensor")
+    weight = weight.detach().float()
+    scale = weight.abs().amax(dim=1, keepdim=True) / 127.0
+    # An all-zero row has scale 0; its values are 0 either way.
+    values = torch.where(scale > 0, weight / torch.where(scale > 0, scale, 1.0), 0.0)
+    return values.round().clamp(-127, 127).to(torch.int8), scale
+
+
+def compress_state_dict(state_dict: dict, storage: str, int8_tensors: tuple[str, ...] = ("embedding.weight",)) -> dict:
+    """Return the stored form of a float32 state dict (see decompress_state_dict)."""
+    if storage not in WEIGHT_STORAGES:
+        raise ValueError(f"Unknown weight storage: {storage!r}")
+    for name, tensor in state_dict.items():
+        if tensor.dtype != torch.float32:
+            raise ValueError(f"Expected float32 weights, {name} is {tensor.dtype}")
+    if storage == "fp32":
+        return dict(state_dict)
+    if storage == "fp16":
+        return {name: tensor.to(torch.float16) for name, tensor in state_dict.items()}
+    missing = [name for name in int8_tensors if name not in state_dict]
+    if missing:
+        raise ValueError(f"Tensors to quantize are missing: {missing}")
+    stored = {}
+    for name, tensor in state_dict.items():
+        if name in int8_tensors:
+            stored[name], stored[name + ROW_SCALE_SUFFIX] = quantize_rowwise_int8(tensor)
+        else:
+            stored[name] = tensor.clone()
+    return stored
+
+
+def decompress_state_dict(state_dict: dict, storage: str) -> dict:
+    """Float32 state dict from a stored one; refuses dtypes the storage does not allow."""
+    if storage == "fp32":
+        return state_dict
+    if storage == "fp16":
+        wrong = [name for name, tensor in state_dict.items() if tensor.dtype != torch.float16]
+        if wrong:
+            raise ValueError(f"fp16 storage with non-float16 tensors: {wrong}")
+        return {name: tensor.float() for name, tensor in state_dict.items()}
+    if storage == "int8_rowwise":
+        restored = {}
+        scales = {name for name in state_dict if name.endswith(ROW_SCALE_SUFFIX)}
+        unused_scales = set(scales)
+        for name, tensor in state_dict.items():
+            if name in scales:
+                continue
+            if tensor.dtype == torch.int8:
+                scale = state_dict.get(name + ROW_SCALE_SUFFIX)
+                if tensor.dim() != 2 or scale is None or scale.dtype != torch.float32 or scale.shape != (tensor.shape[0], 1):
+                    raise ValueError(f"int8 tensor {name} needs 2 dimensions and a float32 row scale of shape (rows, 1)")
+                unused_scales.discard(name + ROW_SCALE_SUFFIX)
+                restored[name] = tensor.float() * scale
+            elif tensor.dtype == torch.float32:
+                restored[name] = tensor
+            else:
+                raise ValueError(f"int8_rowwise storage with {tensor.dtype} tensor {name}")
+        if unused_scales:
+            raise ValueError(f"Row scales without an int8 tensor: {sorted(unused_scales)}")
+        return restored
+    raise ValueError(f"Unknown weight storage: {storage!r}")
+
+
 def model_from_checkpoint(checkpoint):
     config = checkpoint.get("config", {})
     model = build_model(len(checkpoint["languages"]), config.get("buckets", BUCKETS), config.get("embedding_dim", 32), config.get("hidden_dim", 128), config.get("arch", "linear"))
-    model.load_state_dict(checkpoint["state_dict"])
+    model.load_state_dict(decompress_state_dict(checkpoint["state_dict"], config.get("weight_storage", "fp32")))
     ensemble = checkpoint.get("ensemble")
     if ensemble:
         companions = ensemble["companions"]
