@@ -208,3 +208,91 @@ Feature hashing dominates the time, so model size does not measurably change lat
 **Caveats.**
 - One seed per configuration; seed variance was not measured. Differences of about 0.05 pp on the full slice may be within it.
 - 4 epochs, selected at epoch 2 in every run. All runs overfit after epoch 2, as Exp A did.
+
+## Exp D: three times more data (150k rows per language)
+
+**Question.** Does more data help when the architecture stays the same as Exp A?
+
+**Data.** `prepare_multidomain_data.py --cap 150000 --workers 3 --out data/prepared_v3`, with the same filters and domain mix as Exp A's data.
+
+| | Rows |
+|---|---:|
+| Train | 14,922,860 |
+| Validation | 99,205 |
+| `nn` negatives | 20,000 |
+
+- Three labels have less than 150k rows of usable text: bo 107,756, gn 123,237, tn 141,867.
+- The manifest records no source errors.
+- Rows dropped by filters: 272 FLORES shingle matches, 64,388 held-out matches (exact or shingle), 145,895 markup rows.
+- A scan of all rows after `ticket_v2` cleanup found 0 rows with no letters.
+
+**Training.** The configuration and selection are the same as Exp A. Only `--data-dir` changes, and features are streamed (`--stream-workers 3`) because a cache would need about 27 GB.
+
+```bash
+.venv/bin/python train_model.py --data-dir data/prepared_v3 --valid-csv reports/flores_dev.csv \
+  --model reports/exp_d/model-exp-d.pt --report-dir reports/exp_d --arch mlp --buckets 131072 \
+  --embedding-dim 64 --hidden-dim 128 --ngram-max 5 --word-features --preprocessing ticket_v2 \
+  --dropout 0.05 --lr 0.003 --batch-size 512 --epochs 6 --patience 2 --threads 2 \
+  --encode-workers 3 --stream-workers 3
+```
+
+Each epoch took about 41 minutes on 4 cores, and the trainer's peak RSS was 5.2 GB.
+
+| Epoch | Dev accuracy | Dev macro F1 |
+|---:|---:|---:|
+| 1 | 96.78 | 96.74 |
+| 2 | **96.84** | **96.85** (selected) |
+| 3 | 96.79 | 96.79 |
+| 4 | 96.71 | 96.69 (early stop) |
+
+Exp A's best epoch reached 96.27 dev accuracy.
+
+**FLORES devtest.** One evaluation of the selected checkpoint. Values are accuracy / macro F1.
+
+| Slice | Exp A | Exp D | lid218e restricted |
+|---|---|---|---|
+| full | 99.14 / 99.12 | **99.27 / 99.26** | 99.13 / 99.10 |
+| ≤20 | 89.63 | **91.24 / 91.21** | 89.38 / 89.38 |
+| 21–50 | – | **98.32 / 98.30** | 98.03 / 98.00 |
+| 51–100 | – | **99.14 / 99.14** | 99.06 / 99.00 |
+| >100 | 99.25 / 99.23 | **99.37 / 99.36** | 99.31 / 99.09 |
+| extra variants (zho_Hant, prs, ckb) | – | **100.00** | 97.66 |
+
+**Paired difference** (bootstrap over sentences, McNemar):
+
+| Slice | Exp D − lid218e restricted | Exp D − Exp A |
+|---|---|---|
+| full | +0.15 pp (+0.10..+0.20), p=1.5e-7 | +0.13 pp (+0.09..+0.18), p=5e-8 |
+| ≤20 | +1.86 pp (+1.66..+2.04), p=3e-85 | +1.60 pp (+1.45..+1.76), p=2e-92 |
+| 21–50 | +0.29 pp (+0.21..+0.37), p=7e-11 | – |
+| 51–100 | +0.09 pp (+0.03..+0.15), p=0.003 | – |
+| >100 | +0.07 pp (+0.00..+0.12), p=0.03 | +0.13 pp (+0.07..+0.18), p=2e-6 |
+
+Against fastText lid.176 (restricted), the difference is +11.09 pp on full sentences and +19.93 pp on ≤20.
+
+**Hard pairs** (devtest full, F1):
+
+| Language | Exp A | Exp D | lid218e |
+|---|---:|---:|---:|
+| bs | 0.621 | 0.673 | 0.596 |
+| hr | 0.715 | 0.737 | 0.734 |
+| ms | 0.946 | 0.951 | 0.953 |
+| id | 0.943 | 0.954 | 0.950 |
+| nb | 0.984 | 0.991 | 0.996 |
+| da | 0.986 | 0.991 | 0.995 |
+
+- The largest remaining confusions are bs→hr (385), hr→bs (193) and ms→id (85).
+- Per-language F1 trails lid218e most on sr (−0.009), nb and da (−0.004 each).
+
+**Reading.**
+- With the architecture unchanged, three times more data makes the model significantly better than lid218e on every length slice of FLORES-200 devtest for these 100 codes.
+- The largest gain is on short texts: +1.86 pp on ≤20 characters.
+- The model is also significantly better than Exp A everywhere, so data volume was the main limit.
+
+**Caveats.**
+- One seed.
+- The lid218e numbers use the restricted mapping onto our 100 codes; see [FLORES benchmark](flores-benchmark.md).
+- bs/hr remain at about 0.7 F1. FLORES treats them as separate languages, and their sentences are often hard to tell apart.
+- Not done for this checkpoint:
+  - acceptance calibration (`und`) and the support-ticket diagnostics;
+  - compression; Exp B suggests int8 would give about 9.4 MB.
