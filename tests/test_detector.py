@@ -48,7 +48,8 @@ class DetectorTests(unittest.TestCase):
                 [detector.predict(t) for t in texts],
             )
             self.assertEqual(detector.predict_many([]), [])
-            self.assertFalse(detector.model.training)
+            # Inference is deterministic (no dropout or other training-mode state).
+            self.assertEqual(detector.predict_details(texts[1]), detector.predict_details(texts[1]))
             self.assertEqual(detector.predict_details(texts[0])["language"], "und")
             self.assertEqual(
                 detector.predict_ticket("123 !!!", allow_uncertain=True), "und"

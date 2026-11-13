@@ -123,7 +123,7 @@ class V20Tests(unittest.TestCase):
         for arch in ('linear', 'mlp'):
             d = self.load(checkpoint(arch=arch))
             self.assertEqual(d.predict('Hello support'), 'en')
-            self.assertFalse(d.model.training)
+            self.assertEqual(d.predict_details('Hello support'), d.predict_details('Hello support'))
 
     def test_bundled_v20_acceptance(self):
         d = LanguageDetector(Path(__file__).resolve().parents[1] / 'model.pt')

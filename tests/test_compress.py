@@ -5,6 +5,7 @@ import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from language_detector import (
@@ -13,6 +14,7 @@ from language_detector import (
     build_model,
     compress_state_dict,
     decompress_state_dict,
+    encode_batch,
     model_from_checkpoint,
 )
 
@@ -39,6 +41,10 @@ def logits(model, texts=TEXTS, buckets=64):
         return model.eval()(*batch(texts, buckets=buckets))
 
 
+def np_logits(detector, texts=TEXTS):
+    return detector.model.logits(*encode_batch(texts, **detector.encoding_options))
+
+
 class CompressTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -58,9 +64,9 @@ class CompressTests(unittest.TestCase):
             expected_dtype = torch.float16 if storage == "fp16" else torch.int8
             self.assertEqual(stored["state_dict"]["embedding.weight"].dtype, expected_dtype)
             detector = LanguageDetector(output)
-            for name, tensor in detector.model.state_dict().items():
-                self.assertEqual(tensor.dtype, torch.float32, name)
-            difference = (logits(detector.model) - logits(reference.model)).abs().max().item()
+            # The numpy runtime keeps the stored dtype in memory (no float32 copy).
+            self.assertEqual(detector.model.embedding.weight.dtype, {"fp16": np.float16, "int8_rowwise": np.int8}[storage])
+            difference = abs(np_logits(detector) - np_logits(reference)).max()
             self.assertLess(difference, tolerance, storage)
             self.assertEqual([detector.predict(t) for t in TEXTS], [reference.predict(t) for t in TEXTS])
 
@@ -86,10 +92,10 @@ class CompressTests(unittest.TestCase):
         self.assertNotIn("weight_storage", checkpoint["config"])
         member = build_model(100, 131072, 64, 128, "mlp")
         member.load_state_dict(checkpoint["state_dict"])
-        self.assertTrue(torch.equal(detector.model.members[0].embedding.weight, member.embedding.weight))
+        self.assertTrue((detector.model.members[0].embedding.full() == member.embedding.weight.detach().numpy()).all())
         companion = checkpoint["ensemble"]["companions"][0]
-        self.assertTrue(torch.equal(detector.model.members[1].embedding.weight,
-                                    companion["state_dict"]["embedding.weight"]))
+        self.assertTrue((detector.model.members[1].embedding.full()
+                         == companion["state_dict"]["embedding.weight"].numpy()).all())
         self.assertEqual([detector.predict(t) for t in TEXTS], ["en", "pl", "fr", "ru", "es"])
 
     def test_unknown_storage_is_refused(self):

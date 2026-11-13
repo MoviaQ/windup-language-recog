@@ -290,9 +290,6 @@ _DETECTOR = None
 
 def _init_worker(model_path: str) -> None:
     global _DETECTOR
-    import torch
-
-    torch.set_num_threads(1)
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from language_detector import LanguageDetector
@@ -320,9 +317,11 @@ def predict_ours(model_path: Path, texts: list[str], workers: int) -> list[dict[
 
 
 def checkpoint_languages(model_path: Path) -> list[str]:
-    import torch
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from language_detector import load_model
 
-    return sorted(torch.load(model_path, map_location="cpu", weights_only=True)["languages"])
+    return sorted(load_model(model_path)[0]["languages"])
 
 
 # --- external predictions ---------------------------------------------------
@@ -462,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="also report " + ", ".join(f"{k}->{v}" for k, v in EXTRA_VARIANTS.items()))
     parser.add_argument("--limit-per-language", type=int, help="first N sentences per file (smoke runs)")
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 1,
-                        help="processes for our model, one torch thread each")
+                        help="processes for our model")
     parser.add_argument("--predictions-out", type=Path,
                         help="also write per-item gold and predictions of every system as JSONL")
     args = parser.parse_args(argv)
