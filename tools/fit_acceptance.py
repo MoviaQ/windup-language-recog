@@ -238,21 +238,17 @@ _DETECTOR = None
 
 def _init_worker(model_path: str) -> None:
     global _DETECTOR
-    import torch
-
-    torch.set_num_threads(1)
     from language_detector import LanguageDetector
 
     _DETECTOR = LanguageDetector(model_path)
 
 
 def _logits_chunk(texts: list[str]) -> tuple[np.ndarray, list[str | None]]:
-    """Logits as predict_details computes them (encode -> EmbeddingBag offsets -> model).
+    """Logits as predict_details computes them (encode -> mean-pooled bags -> numpy model).
 
     A text that encode() refuses (no letters) gets NaN logits and its error
     message; predict_details raises on such texts, so no threshold applies.
     """
-    import torch
     from language_detector import encode
 
     detector = _DETECTOR
@@ -271,9 +267,7 @@ def _logits_chunk(texts: list[str]) -> tuple[np.ndarray, list[str | None]]:
         ids.extend(features)
         valid.append(i)
     if valid:
-        with torch.inference_mode():
-            logits = detector.model(torch.tensor(ids, dtype=torch.long), torch.tensor(offsets, dtype=torch.long))
-        out[valid] = logits.numpy()
+        out[valid] = detector.model.logits(np.asarray(ids, dtype=np.int64), np.asarray(offsets, dtype=np.int64))
     return out, errors
 
 
@@ -296,6 +290,7 @@ def compute_logits(model_path: Path, texts: list[str], workers: int, chunk: int 
 def cached_logits(model_path: Path, model_sha: str, texts: list[str], workers: int,
                   cache_dir: Path | None):
     digest = hashlib.sha256(model_sha.encode())
+    digest.update(b"numpy-runtime-logits-v1")  # torch-era caches differ in the last bits
     for text in texts:
         digest.update(text.encode("utf-8"))
         digest.update(b"\x00")
@@ -321,14 +316,16 @@ def evidence_profiles(texts: list[str]) -> tuple[np.ndarray, np.ndarray]:
 
 
 def softmax_stats(logits: np.ndarray, temperature: float):
-    """best index, top-1 probability and top1-top2 margin at a temperature (float32 like torch)."""
-    import torch
+    """best index, top-1 probability and top1-top2 margin at a temperature.
 
-    with torch.inference_mode():
-        probabilities = (torch.from_numpy(logits) / temperature).softmax(dim=1)
-        top = probabilities.topk(2, dim=1)
-    values, indices = top.values.numpy(), top.indices.numpy()
-    return indices[:, 0].astype(np.int64), values[:, 0].astype(np.float64), (values[:, 0] - values[:, 1]).astype(np.float64)
+    Same float32 arithmetic as LanguageDetector.predict_details (numpy_runtime.softmax).
+    """
+    import numpy_runtime
+
+    probabilities = numpy_runtime.softmax(logits.astype(np.float32) / temperature)
+    best = probabilities.argmax(axis=1)
+    top = np.sort(probabilities, axis=1)[:, -2:]
+    return best.astype(np.int64), top[:, 1].astype(np.float64), (top[:, 1] - top[:, 0]).astype(np.float64)
 
 
 def fit_temperature(logits: np.ndarray, targets: np.ndarray) -> float:

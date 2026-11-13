@@ -40,9 +40,6 @@ _DETECTOR = None
 
 def _init(model_path: str) -> None:
     global _DETECTOR
-    import torch
-
-    torch.set_num_threads(1)
     from language_detector import LanguageDetector
 
     _DETECTOR = LanguageDetector(model_path)
