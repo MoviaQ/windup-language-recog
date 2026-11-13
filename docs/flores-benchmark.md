@@ -61,7 +61,7 @@ fastText and NLLB labels lives in the same tool (`FASTTEXT_EXTRA_LABELS`,
 ## Commands
 
 ```bash
-# Our checkpoint (read-only). One single-threaded torch process per worker.
+# Our model (read-only; default model.npz). One process per worker.
 .venv/bin/python tools/evaluate_flores.py --flores-dir reports/flores/flores200_dataset \
   --split dev --extra-variants --output reports/flores_dev.json
 
@@ -95,7 +95,9 @@ comparable with full runs.
   SHA-256 `8ded5749a2ad79ae9ab7c9190c7c8b97ff20d54ad8b9527ffa50107238fc7f6a`.
   Both weights have their own licenses and are not bundled.
 
-## Recorded devtest run
+## Recorded devtest run (v21)
+
+This run used the v21 release; v22 results are in the [model card](model-card.md) and [experiments](experiments.md) ("v22 release").
 
 Commit `e4688fe` (working tree: only the then-uncommitted tool and its
 test), `model.pt` SHA-256 `358586ac…579b`, split `devtest`, fasttext-wheel

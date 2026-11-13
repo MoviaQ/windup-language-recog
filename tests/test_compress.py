@@ -85,19 +85,6 @@ class CompressTests(unittest.TestCase):
         for name, tensor in model.state_dict().items():
             self.assertTrue(torch.equal(tensor, checkpoint["state_dict"][name]), name)
 
-    @unittest.skipUnless((ROOT / "model.pt").exists(), "bundled model.pt is absent")
-    def test_bundled_model_predictions_match_plain_load_state_dict(self):
-        detector = LanguageDetector(ROOT / "model.pt")
-        checkpoint = torch.load(ROOT / "model.pt", map_location="cpu", weights_only=True)
-        self.assertNotIn("weight_storage", checkpoint["config"])
-        member = build_model(100, 131072, 64, 128, "mlp")
-        member.load_state_dict(checkpoint["state_dict"])
-        self.assertTrue((detector.model.members[0].embedding.full() == member.embedding.weight.detach().numpy()).all())
-        companion = checkpoint["ensemble"]["companions"][0]
-        self.assertTrue((detector.model.members[1].embedding.full()
-                         == companion["state_dict"]["embedding.weight"].numpy()).all())
-        self.assertEqual([detector.predict(t) for t in TEXTS], ["en", "pl", "fr", "ru", "es"])
-
     def test_unknown_storage_is_refused(self):
         checkpoint = tiny_checkpoint()
         checkpoint["config"]["weight_storage"] = "int4"

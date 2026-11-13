@@ -208,11 +208,9 @@ def validate_output(args: argparse.Namespace) -> None:
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     validate_output(args)
     import fasttext
-    import torch
+    import numpy
     from language_detector import LanguageDetector
 
-    if args.threads < 1:
-        raise ValueError("threads must be positive")
     input_sha = file_digest(args.input)
     metadata = json.loads(METADATA.read_text(encoding="utf-8"))
     if (
@@ -221,27 +219,22 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValueError("the committed synthetic fixture has changed")
     cases = load_cases(args.input)
-    previous_threads = torch.get_num_threads()
-    try:
-        torch.set_num_threads(args.threads)
-        detector = LanguageDetector(args.model)
-        supported = set(detector.languages) | {"und"}
-        if any(case["language"] not in supported for case in cases):
-            raise ValueError("gold language is outside the model's supported scope")
-        ft_model = fasttext.load_model(str(args.ft_model))
-        excluded = (
-            set(metadata["benchmark"]["clean_cohort_ids_excluded"])
-            if input_sha == metadata["file"]["sha256"] else set()
-        )
-        start = time.perf_counter()
-        report = evaluate_cases(detector, ft_model, cases, excluded)
-        report["evaluation_seconds"] = time.perf_counter() - start
-    finally:
-        torch.set_num_threads(previous_threads)
+    detector = LanguageDetector(args.model)
+    supported = set(detector.languages) | {"und"}
+    if any(case["language"] not in supported for case in cases):
+        raise ValueError("gold language is outside the model's supported scope")
+    ft_model = fasttext.load_model(str(args.ft_model))
+    excluded = (
+        set(metadata["benchmark"]["clean_cohort_ids_excluded"])
+        if input_sha == metadata["file"]["sha256"] else set()
+    )
+    start = time.perf_counter()
+    report = evaluate_cases(detector, ft_model, cases, excluded)
+    report["evaluation_seconds"] = time.perf_counter() - start
     report["provenance"] = {
         "input_sha256": input_sha, "model_sha256": file_digest(args.model),
         "fasttext_sha256": file_digest(args.ft_model), "python": platform.python_version(),
-        "torch": str(torch.__version__), "threads": args.threads,
+        "numpy": str(numpy.__version__),
         "sentence_cutoff": SENTENCE_CUTOFF, "fitted_on_input": False,
         "warning": (
             "Small AI-authored fixture, human-unverified; not production evidence."
@@ -255,9 +248,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
-    parser.add_argument("--model", type=Path, default=ROOT / "model.pt")
+    parser.add_argument("--model", type=Path, default=ROOT / "model.npz")
     parser.add_argument("--ft-model", type=Path, required=True)
-    parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     try:

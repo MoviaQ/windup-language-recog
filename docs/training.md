@@ -1,6 +1,8 @@
 # Reproduce public-data training
 
-These commands reproduce the public **WiLI-2018** and **MASSIVE 1.1** base-model workflow. The bundled v21 weights additionally use support-domain adaptation and synthetic training augmentation. The complete adaptation workflow is not distributed, so these commands do not reproduce v21. Training is optional: normal inference uses the bundled `model.pt`.
+These commands reproduce the public **WiLI-2018** and **MASSIVE 1.1** base-model workflow. The bundled v22 model is trained instead on the multidomain corpus (see "Larger corpora" below and [experiments](experiments.md), Exp D, Exp E and the v22 release section, for the exact commands). Training is optional: normal inference uses the bundled `model.npz` and does not need PyTorch.
+
+Training writes PyTorch `.pt` checkpoints. To use one with the torch-free runtime, export it with `tools/export_numpy.py --input model-retrained.pt --output model-retrained.npz` (add `--storage int8_rowwise` for a 4× smaller embedding table). `LanguageDetector` also reads `.pt` files directly when PyTorch is installed.
 
 ## Prepare and train
 

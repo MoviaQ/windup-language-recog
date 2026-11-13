@@ -24,7 +24,7 @@ py -3 -m venv .venv
 ```python
 from language_detector import LanguageDetector
 
-model = LanguageDetector("model.pt")
+model = LanguageDetector("model.npz")
 code = model.predict("Potrzebuję pomocy ze zmianą hasła.")
 codes = model.predict_many([
     "Please reset my password.",
@@ -55,7 +55,7 @@ code_or_und = model.predict_ticket("Access problem", "Please help me sign in.", 
 
 Results contain `language`, `best_language`, `confidence`, `margin`, `uncertain`, and `calibrated`. Confidence is the largest softmax score and margin is the difference between the top two softmax scores, both optionally temperature-scaled. With no checkpoint calibration, `calibrated` is false and the method always returns its best supported code.
 
-The v21 checkpoint keeps v20's calibrated MLP and linear-network logits. Its acceptance policy requires model agreement and uses cutoffs by language and text length, a per-length top-2 margin floor, plus case-sensitive single-word evidence. The margin floor requires (top1 probability - top2 probability) to meet a stored value for the input's length group. It can return `und` even when the softmax score is high. These rules are not a correctness guarantee.
+The v22 model applies a fitted temperature and confidence cutoffs per predicted language and length group. Length groups follow `evidence_profile`: more than three words, or at least eight CJK/kana/Hangul characters, counts as long. Older checkpoints can additionally store model-agreement gates, per-length top-2 margin floors and single-word evidence tables, and the runtime still applies them. These rules are not a correctness guarantee.
 
 Older calibrated checkpoints storing only `temperature` and `min_confidence` still use their single threshold. `predict_ticket(..., allow_uncertain=True)` requires calibration and can return `und` for empty cleaned text. This reduces accepted predictions; it does not guarantee an accuracy level or reliably identify unsupported languages. Fit calibration on validation data, and evaluate accuracy together with acceptance coverage on held-out data.
 
@@ -63,7 +63,7 @@ Older calibrated checkpoints storing only `temperature` and `min_confidence` sti
 
 Plain `predict` raises `ValueError` when cleaned input has no letters. Batch prediction aborts if an input is invalid; filter invalid inputs first when handling heterogeneous batches. An empty batch returns an empty list, and batch size must be positive.
 
-For short CPU requests you can benchmark `torch.set_num_threads(1)` before constructing the detector. PyTorch's default thread count can add overhead. This setting affects the process globally; choose it for your workload rather than treating a measured latency as a universal guarantee.
+Inference runs on numpy. Most of the time per text goes to feature hashing in Python, not to the network. Batching with `predict_many` amortizes per-call overhead. Measured latency depends on hardware and text length; benchmark your own workload rather than treating a number as a guarantee.
 
 CLI uncertainty mode uses the same policy as the Python ticket API:
 

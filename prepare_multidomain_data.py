@@ -1,8 +1,9 @@
-"""Prepare an experimental multidomain training corpus (data/prepared_v2).
+"""Prepare the multidomain training corpus (data/prepared_v2, data/prepared_v3).
 
 The corpus mixes web, Wikipedia, short-sentence and other (parallel/news)
-text for the 100 codes in ``data/languages.json``. It is an experiment: the
-bundled ``model.pt`` was not trained on it. Sources and licences are listed in
+text for the 100 codes in ``data/languages.json``. The bundled ``model.npz``
+(v22) was trained on the ``--cap 150000`` build (data/prepared_v3); see
+docs/experiments.md, Exp D. Sources and licences are listed in
 ``THIRD_PARTY_NOTICES.md`` ("Multidomain training data").
 
 Sources (all pinned; see ``HF_REVISIONS`` and the URL tables below):
@@ -886,6 +887,20 @@ def fineweb2_docs(name: str, lock: Lock, rng: random.Random, stats: Counter) -> 
     yield from parquet_docs("fineweb2", files, "text", lock, rng, stats)
 
 
+class TaggedDocument(list):
+    """Document parts plus the upstream sub-source (e.g. an OpenLID licence tag)."""
+
+    def __init__(self, parts, tag: str):
+        super().__init__(parts)
+        self.tag = tag
+
+
+def document_source(name: str, document) -> str:
+    """Row source name: "openlid:mt560" for a tagged document, else the plan name."""
+    tag = getattr(document, "tag", None)
+    return f"{name}:{tag}" if tag else name
+
+
 def openlid_rows(name: str, quota: dict[str, int], raw_dir: Path, lock: Lock, seed: int,
                  stats: Counter) -> dict[str, list[tuple[str, str]]]:
     """Uniform sample (bottom-k on seeded random keys) of permitted rows by domain.
@@ -1238,7 +1253,7 @@ def collect_language(label: str) -> dict:
     for domain in ("short", "other"):
         if openlid.get(domain):
             items = openlid[domain]
-            plan[domain].append(("openlid", lambda items=items: iter([[t] for t, _ in items])))
+            plan[domain].append(("openlid", lambda items=items: iter([TaggedDocument([t], tag) for t, tag in items])))
     carry = 0
     for position, domain in enumerate(COLLECT_ORDER):
         later = COLLECT_ORDER[position + 1 :]
@@ -1289,7 +1304,7 @@ def collect_language(label: str) -> dict:
                             continue
                         seen.add(hashed)
                         near.update(signatures)
-                        rows.append((domain, name, text))
+                        rows.append((domain, document_source(name, document), text))
                         accepted += 1
                         taken += 1
                     if taken >= quota:
@@ -1727,7 +1742,7 @@ def main(argv: list[str] | None = None) -> None:
         "partial": bool(args.languages),
         "labels_built": labels,
         "negatives": {"nn": "negatives/nn.csv (not a training label)"},
-        "experimental": "Not used for the bundled model.pt.",
+        "used_by": "See docs/experiments.md for the models trained on this build.",
         "config": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
         "domain_mix": mix,
         "label_decisions": {"aliases": LABEL_ALIASES, "dropped_codes": DROPPED_CODES,

@@ -299,6 +299,8 @@ Against fastText lid.176 (restricted), the difference is +11.09 pp on full sente
 
 ## Exp E: acceptance policy for Exp D
 
+> **Release note.** The released v22 policy is **not** the `--negative-scale 1` checkpoint described below. The owner chose to keep Bokmål answers, so v22 uses `--negative-scale 0`, refitted on the int8 network with the numpy runtime; see "v22 release" at the end of this page. The numbers in this section are for the scale-1 checkpoint.
+
 **Question.** Which `und` (abstain) policy should the single Exp D network carry, and how does the calibrated checkpoint compare with v21 on data that never took part in fitting?
 
 **Tool.** `tools/fit_acceptance.py` (commit `a91c6be`). It writes the policy into `checkpoint["calibration"]` in the v21 schema, using only keys that `predict_details` reads (`temperature`, `min_confidence`, `min_confidence_by_language`, `min_confidence_by_language_and_length`, `min_margin_by_length`) plus the `rule` string. Provenance goes into `checkpoint["acceptance_fit"]`: data paths, SHA-256 digests, row counts, overlap removals, the cross-fit table and the git commit.
@@ -435,4 +437,96 @@ Authored tickets (84 rows, AI-authored, not human-verified). C = correct, E = ac
 - The public splits were rebuilt locally with `prepare_public_data.py` from the same archives (valid 100,173 / test 189,599 rows). v21's documented counts are 100,175 / 189,557, so the files are not byte-identical to v21's; probably different library versions in the cleanup, which was not investigated. Both models were scored on the same rebuilt file.
 - FLORES dev was already used to choose Exp D's checkpoint (epoch selection), and now its thresholds as well. Devtest remains untouched by both.
 - One fit, one seed, λ fixed in advance at v21's value; no λ sweep was run.
-- `tools/fit_acceptance.py` computes logits through the current torch `LanguageDetector` internals (`encode`, `model`). If inference moves to numpy, this one function has to follow. The policy itself depends only on `predict_details` semantics.
+- `tools/fit_acceptance.py` originally computed logits through the torch `LanguageDetector` internals. It now uses the numpy runtime (commit `01bb8d3`); see "v22 release".
+
+## v22 release: numpy runtime, int8 Exp D, Bokmål-keeping policy
+
+**Runtime.** Inference moved from PyTorch to numpy (`numpy_runtime.py`, commit `812d6f8`).
+
+Equivalence was checked item by item. `predict_details` in the previous PyTorch code (`git show adbb11e:language_detector.py`, the parent of `812d6f8`) and in the numpy code ran on every FLORES dev and devtest item: full sentences, 20/50/100-character prefixes, and the zho_Hant/prs_Arab/ckb_Arab variants. That is 370,720 + 378,502 items per model.
+
+| Model | Raw label differences | `und` decision differences | Max probability difference |
+|---|---:|---:|---:|
+| v21 `model.pt` (ensemble, full v21 policy) | 0 | 0 | 1.8e-6 |
+| Exp D fp32 (no policy) | 0 | 0 | 2.0e-6 |
+| Exp D int8 (no policy) | 0 | 0 | 2.3e-6 |
+
+**Footprint.** Exp D int8, one measured run: one process, one thread, the 2,000-text latency sample, cache cleared before each call.
+
+| | numpy runtime, `.npz` | PyTorch runtime, `.pt` |
+|---|---:|---:|
+| Environment on disk | 88 MB (numpy + ftfy + pip) | 5.6 GB (PyTorch with CUDA libraries) |
+| Process RSS after load | 56 MB | 560 MB |
+| Import / load | 0.06 s / 0.07 s | 1.05 s / 0.11 s |
+| Median / p95 latency | 0.43 / 1.0 ms | 0.38 / 0.94 ms (fp32) |
+
+The two equivalence runs were active at the same time, so the latencies are noisy.
+
+**Acceptance policy.** The policy was refitted with `--negative-scale 0` (owner decision: answer Bokmål). It was fitted on the int8 network, so the thresholds see exactly the probabilities the release computes.
+
+```bash
+.venv/bin/python tools/compress_checkpoint.py --input reports/exp_d/model-exp-d.pt \
+  --output reports/release/model-exp-d-int8.pt --storage int8_rowwise
+.venv/bin/python tools/fit_acceptance.py --model reports/release/model-exp-d-int8.pt \
+  --out reports/release/model-exp-d-int8-calibrated.pt --report reports/release/fit_report_int8.json \
+  --flores-dir data/raw_multidomain/flores200_dataset --flores-negative nno_Latn \
+  --csv prepared_v3_valid=data/prepared_v3/valid.csv --csv public_valid=data/prepared/valid_short.csv \
+  --negatives prepared_v3_nn=data/prepared_v3/negatives/nn.csv --reporting-csv data/prepared/test_short.csv \
+  --drop-reporting-overlap --negative-scale 0 --workers 3
+.venv/bin/python tools/export_numpy.py --input reports/release/model-exp-d-int8-calibrated.pt --output model.npz
+```
+
+- **Fit result.** The selected components are again language + length, with temperature 1.1680. The cross-fitted held-out coverage / precision is 91.44 / 99.822, against 91.44 / 99.823 for the fp32 refit.
+- **Post-write check.** `predict_details` agreed with the tool's simulation on 2,997 texts; 3 float ties were skipped.
+- **Recorded git state.** The fit recorded commit `01bb8d3`, with uncommitted changes only in `requirements*.txt`, `setup.sh` and `tools/benchmark_ticket_guard.py`. None of them affect fitting.
+
+**Reporting-only evaluation.** Run once with `tools/evaluate_flores.py --split devtest --extra-variants` and `tools/evaluate_acceptance.py`; files are in `reports/release/`.
+
+| FLORES devtest slice | Raw accuracy v22 / v21 | Coverage v22 / v21 | Accepted precision v22 / v21 | Accepted errors v22 / v21 |
+|---|---|---|---|---|
+| full | 99.27 / 98.51 | 96.57 / 93.63 | 99.995 / 99.960 | 5 / 38 |
+| ≤20 | 91.24 / 84.08 | 77.01 / 71.09 | 99.50 / 96.87 | 388 / 2,252 |
+| 21–50 | 98.32 / 96.22 | 94.02 / 88.17 | 99.94 / 99.55 | 56 / 398 |
+| 51–100 | 99.14 / 98.24 | 96.23 / 92.75 | 99.99 / 99.92 | 8 / 75 |
+| >100 | 99.37 / 98.69 | 96.81 / 94.08 | 99.996 / 99.974 | 3 / 18 |
+| variants (zho_Hant, prs, ckb) | 100.00 / 66.67 | 99.87 / 69.07 | 100.00 / 95.61 | 0 / 92 |
+
+The paired comparison against NLLB lid218e (restricted mapping) on raw labels gives:
+
+| Slice | Difference | 95% CI | p |
+|---|---|---|---|
+| full | +0.14 pp | +0.09..+0.20 | 2.7e-7 |
+| ≤20 | +1.86 pp | +1.67..+2.04 | 1.7e-85 |
+| 21–50 | +0.29 pp | +0.21..+0.37 | 4.9e-11 |
+| 51–100 | +0.09 pp | +0.03..+0.15 | 0.0033 |
+| >100 | +0.06 pp | +0.00..+0.12 | 0.034 |
+
+Per-language coverage on FLORES devtest full sentences, v22 / v21 (%):
+
+| Language | Coverage |
+|---|---|
+| nb | 93.1 / 89.1 |
+| da | 92.0 / 87.1 |
+| en | 64.7 / 45.6 |
+| ms | 68.0 / 35.6 |
+| id | 59.5 / 31.1 |
+| bs | 1.5 / 4.7 |
+| hr | 1.1 / 2.5 |
+| sr | 99.5 / 97.2 |
+
+| Other reporting set | v22 | v21 |
+|---|---|---|
+| Public test, all 189,599 (coverage / precision / errors) | 93.10 / 99.77 / 409 | 95.39 / 99.68 / 586 |
+| Public test, ≤3 words, 14,120 | 74.45 / 99.74 / 27 | 88.63 / 99.41 / 74 |
+| Nynorsk, FLORES devtest `nno_Latn`, accepted | 70.9% (2,650 as nb) | 66.3% (2,395 as nb) |
+| Nynorsk, reporting half of `nn.csv`, accepted | 68.2% (6,696 as nb) | 66.0% (6,290 as nb) |
+| Authored tickets, whole-ticket policy (C / E / U) | 68 / 6 / 10 | 70 / 5 / 9 |
+| Authored tickets, guarded API (C / E / U) | 68 / 1 / 15 | 70 / 0 / 14 |
+
+**Caveats.**
+- **Not rerun for v22:**
+  - the historical application diagnostics (not distributed), the locked 64-message sample, and the fastText columns of the ticket benchmark;
+  - seed variance and a λ sweep.
+- **Shorter answers drop.** On the public test, v22 answers fewer texts of three words or fewer (74.4% against 88.6%). v21 was support-adapted and its policy was fitted on public validation alone.
+- **Weak languages.** bs/hr are practically always withheld, and en/ms/id coverage is lower than for other languages.
+- **Data provenance.** The training corpus includes OpenLID `mt560` rows (MT560/JW300). The owner accepted that licensing risk for this release.

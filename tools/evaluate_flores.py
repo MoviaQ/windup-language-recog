@@ -451,7 +451,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--flores-dir", type=Path, required=True, help="extracted flores200_dataset directory")
     parser.add_argument("--split", choices=SPLITS, default="devtest",
                         help="dev: selection; devtest: reporting only (default)")
-    parser.add_argument("--model", type=Path, default=ROOT / "model.pt", help="checkpoint, opened read-only")
+    parser.add_argument("--model", type=Path, default=ROOT / "model.npz", help="model (.npz or .pt), opened read-only")
     parser.add_argument("--fasttext-predictions", type=Path, action="append", default=[],
                         help="JSONL from tools/predict_fasttext.py; repeatable")
     parser.add_argument("--output", type=Path, help="default: reports/flores_<split>.json")

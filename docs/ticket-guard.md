@@ -12,7 +12,7 @@ checkpoint: `predict`, `predict_many`, `predict_ticket`, and
 ```python
 from language_detector import LanguageDetector
 
-detector = LanguageDetector("model.pt")
+detector = LanguageDetector("model.npz")
 label = detector.predict_guarded_ticket(
     title="Login problem",
     description="Nie mogę się zalogować po zmianie hasła.",
@@ -60,9 +60,15 @@ prefix) can supply sentences. Each ticket costs the whole-ticket pass
 plus one pass per sentence; no latency or memory figure is claimed here.
 
 No fastText runs at inference time. The runtime needs only the bundled
-weights plus `torch` and `ftfy`.
+weights plus `numpy` and `ftfy`.
 
 ## Measured check (small, not production proof)
+
+The measurements in this section were made with the v21 weights (`model.pt`,
+now only in git history). For v22 on the same 84-ticket fixture, the guarded
+API gives 68 correct / 1 wrong / 15 withheld and the whole-ticket policy
+68 / 6 / 10 (v21: 70 / 0 / 14 and 70 / 5 / 9); see the
+[model card](model-card.md). The fastText columns were not rerun for v22.
 
 The committed fixture `tests/fixtures/authored_tickets.jsonl` holds 84
 AI-authored support tickets with distinct family identifiers and own,
@@ -130,7 +136,7 @@ From the repository root:
 mkdir -p reports
 curl --fail --location --output reports/lid.176.bin https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin
 sha256sum reports/lid.176.bin
-.venv/bin/python tools/benchmark_ticket_guard.py --input tests/fixtures/authored_tickets.jsonl --model model.pt --ft-model reports/lid.176.bin --out reports/ticket-guard-benchmark.json
+.venv/bin/python tools/benchmark_ticket_guard.py --input tests/fixtures/authored_tickets.jsonl --model model.npz --ft-model reports/lid.176.bin --out reports/ticket-guard-benchmark.json
 .venv/bin/python -m unittest discover -s tests
 ```
 
@@ -139,7 +145,7 @@ Notes on the commands above:
 - `requirements-benchmark.txt` pins `fasttext-wheel==0.9.2` with
    `numpy<3` (the tool uses the LIST form `model.predict([text], k=1)`,
   tested against that binding). It is benchmark-only: the runtime stays
-  `torch` + `ftfy` from `requirements.txt`, and the guard never imports
+  `numpy` + `ftfy` from `requirements.txt`, and the guard never imports
   fastText at inference time.
 - `reports/` is untracked workspace for the downloaded weights and the
    JSON output; it is not part of the release.
@@ -154,11 +160,12 @@ Notes on the commands above:
   file the benchmark actually ran against.
 - CLI flags (confirmed against `--help`, which works without the
   fastText import): `--input`, `--model`, and required `--ft-model` take
-  explicit local weight/fixture paths; `--threads` defaults to 2;
+  explicit local weight/fixture paths;
   `--out` optionally writes the JSON report (otherwise stdout).
-- Provenance recorded in the report: model SHA-256
+- Provenance recorded in the v21 report (the tool now records the numpy
+  version instead of torch and threads): model SHA-256
   (`358586ac346be2f4…`, unchanged v21 weights), input SHA-256 above,
   fastText file fingerprint, Python 3.12.3 / torch 2.14.1+cpu as run,
   sentence cutoff 0.65, and `fitted_on_input: false`.
-- This changes no checkpoint: still the bundled v21 weights, still an
-  unreleased software feature — no new version or v22 mark.
+- At the time of that run the guard changed no checkpoint (bundled v21
+  weights). It ships unchanged with v22.

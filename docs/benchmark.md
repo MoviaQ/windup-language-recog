@@ -1,4 +1,8 @@
-# Bundled v21 checkpoint evaluation
+# v21 checkpoint evaluation (previous release)
+
+This page documents the v21 release, which is now in git history only. The bundled v22 model is evaluated in the [model card](model-card.md) and [experiments](experiments.md).
+
+The historical application diagnostics below (the 200- and 198-text application sets and the locked 64-message sample) were **not** rerun for v22, because their data is not distributed with the repository. v22 has no support-domain adaptation, so do not assume its results on those sets.
 
 v21 keeps the v20 raw neural weights, ensemble members, weights, and temperatures; only the acceptance calibration changed. v20 combined a support-adapted MLP with the earlier v4 linear network. All predictions choose among the same 100 languages; the optional acceptance policy can abstain. These are local diagnostics, not production guarantees.
 

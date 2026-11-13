@@ -298,5 +298,13 @@ class ResumeTest(unittest.TestCase):
                 self.run_main(raw, "--cap", "100", "--workers", "1", "--resume")
 
 
+class SourceTagTest(unittest.TestCase):
+    def test_tagged_documents_name_their_licence_tag(self):
+        document = prep.TaggedDocument(["Zdanie po polsku."], "mt560")
+        self.assertEqual(list(document), ["Zdanie po polsku."])
+        self.assertEqual(prep.document_source("openlid", document), "openlid:mt560")
+        self.assertEqual(prep.document_source("madlad:pl", ["plain document"]), "madlad:pl")
+
+
 if __name__ == "__main__":
     unittest.main()

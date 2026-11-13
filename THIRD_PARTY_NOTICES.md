@@ -22,9 +22,9 @@ WiLI text originates from Wikipedia. Database licensing does not replace the und
 
 The preparation script extracts utterances, maps locale prefixes to supported language codes, cleans text, removes exact normalized duplicate/conflicting examples, and crops long text. Those are project modifications. The official train/dev/test assignments are retained before duplicate exclusion. Multiple locales can map to one output language code.
 
-## Multidomain training data (experimental, not in bundled weights)
+## Multidomain training data (bundled v22 weights)
 
-`prepare_multidomain_data.py` downloads or streams the sources below into `data/prepared_v2/` for an experimental corpus. The bundled `model.pt` was **not** trained on it, and the prepared records are not redistributed. The script pins dataset revisions and writes the URL, the upstream sha256 (when the host publishes one) and the sha256 of the bytes read for every remote file to `data/prepared_v2/manifest.json` (`sources_lock`). Draft: licences below are taken from each source's own card or licence page and should be reviewed before any weights trained on this corpus are distributed.
+`prepare_multidomain_data.py` downloads or streams the sources below into `data/prepared_v2/` or `data/prepared_v3/`. The bundled `model.npz` (v22) was trained on the `--cap 150000` build (`data/prepared_v3`, 14,922,860 training rows). The prepared records are not redistributed. The script pins dataset revisions and writes, for every remote file, the URL, the upstream sha256 (when the host publishes one) and the sha256 of the bytes read to the build's `manifest.json` (`sources_lock`). The licences below are taken from each source's own card or licence page. They were not reviewed by a lawyer.
 
 | Source | What is used | Licence stated by the source |
 |---|---|---|
@@ -39,7 +39,11 @@ The preparation script extracts utterances, maps locale prefixes to supported la
 | WiLI-2018 and MASSIVE 1.1 (see above) | WiLI train paragraphs, MASSIVE train utterances | as above |
 | [FLORES-200](https://github.com/facebookresearch/flores) | **filter only**: every dev/devtest line is removed from the corpus; no FLORES text is used for training | CC BY-SA 4.0 |
 
-**Owner-accepted risk: MT560 / JW300.** OpenLID-v3 rows tagged `mt560` come from the MT560 compilation (Apache-2.0 as a compilation), which includes JW300 and other OPUS subsets whose upstream terms are narrower or unclear (JW300 was withdrawn from OPUS over its terms of use). The project owner accepted this risk for the experiment. Remove `mt560` from `OPENLID_ALLOWED_TAGS` before building a corpus for distributed weights unless the risk is accepted again for that release.
+**Owner-accepted risk: MT560 / JW300.** OpenLID-v3 rows tagged `mt560` come from the MT560 compilation, which is Apache-2.0 as a compilation. It includes JW300 and other OPUS subsets whose upstream terms are narrower or unclear; JW300 was withdrawn from OPUS over its terms of use.
+
+- The project owner accepted this risk for the experiment and, again, for distributing the v22 weights.
+- OpenLID-v3 supplies 2,653,854 of the 14,922,860 v22 training rows (17.8%). The `data/prepared_v3` build did not record the tag per row, so the share of `mt560` among those rows is unknown. Later builds record it as the row source `openlid:<tag>`.
+- Remove `mt560` from `OPENLID_ALLOWED_TAGS` before building a corpus for future distributed weights, unless the risk is accepted again for that release.
 
 Excluded on purpose: non-commercial sources (Leipzig, XL-Sum, TIL, AfriQA, BLTR, EM corpus, the OpenLID `wiki`/HFWikipedia tag), LTI, TEP, MADAR and other Arabic-dialect or custom-licence sources, UD and GlotStoryBook rows (per-row licence not resolvable), sources without a stated licence, and GlotLID-C (contains FLORES dev). The excluded OpenLID tags and their reasons are listed in the manifest.
 
@@ -47,12 +51,12 @@ The web sources were collected by crawlers and filtered by their publishers; the
 
 ## Runtime and training dependencies
 
-PyTorch, ftfy, NumPy, and pycountry are installed from their respective distributions and retain their own licenses. They are not vendored or relicensed here. Package metadata and source repositories provide complete notices.
+NumPy and ftfy (runtime), and PyTorch, pycountry and pyarrow (training), are installed from their respective distributions and retain their own licenses. They are not vendored or relicensed here. Package metadata and source repositories provide complete notices.
 
 ## Project-authored material
 
 `data/demo.csv`, `data/synthetic.csv`, and `assets/logo.png` are project-authored demonstration/synthetic material and logo artwork, distributed under the repository's MIT license. Synthetic evaluation is illustrative and cannot substitute for an independently labeled application benchmark.
 
-## v21 adaptation
+## v21 adaptation (previous release, git history only)
 
-The bundled v21 weights combine an adapted MLP and an earlier linear network. They include support-domain adaptation with public replay data and project-authored synthetic support requests. v21 keeps v20's weights and changes only the acceptance calibration. Adaptation records are not redistributed. Assistant-reviewed labels are not independently verified human gold. The model contribution license covers project contributions only and does not grant rights to source records.
+The v21 weights combine an adapted MLP and an earlier linear network. They include support-domain adaptation with public replay data and project-authored synthetic support requests. v21 keeps v20's weights and changes only the acceptance calibration. Adaptation records are not redistributed. Assistant-reviewed labels are not independently verified human gold. The model contribution license covers project contributions only and does not grant rights to source records.

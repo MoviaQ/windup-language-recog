@@ -16,7 +16,7 @@ import numpy as np
 import numpy_runtime
 
 BUCKETS = 8192
-DEFAULT_MODEL = Path("model.pt")
+DEFAULT_MODEL = Path("model.npz")
 _word_cache: dict[tuple[str, int], int] = {}
 _word_cache_lock = threading.Lock()
 # Training-side names kept importable from here; they load PyTorch on first use.

@@ -120,7 +120,7 @@ class DetectorTests(unittest.TestCase):
         self.assertFalse(keys["train"] & authored)
 
     def test_bundled_model_if_present(self):
-        path = ROOT / "model.pt"
+        path = ROOT / "model.npz"
         if not path.exists():
             self.skipTest("Train or download the released checkpoint first")
         detector = LanguageDetector(path)

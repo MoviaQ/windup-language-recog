@@ -18,9 +18,9 @@ fi
 printf 'Installing runtime dependencies...\n'
 "$WINDUP_PYTHON" -m pip install --upgrade pip
 "$WINDUP_PYTHON" -m pip install -r requirements.txt
-"$WINDUP_PYTHON" -c 'import torch, ftfy; print("Dependencies ready; PyTorch", torch.__version__)'
-if [ ! -f model.pt ]; then
-  printf 'Error: model.pt is missing. Download the complete repository, including its bundled checkpoint.\n' >&2
+"$WINDUP_PYTHON" -c 'import numpy, ftfy; print("Dependencies ready; numpy", numpy.__version__)'
+if [ ! -f model.npz ]; then
+  printf 'Error: model.npz is missing. Download the complete repository, including its bundled model.\n' >&2
   exit 1
 fi
 printf '\nSetup complete. Try:\n  "%s" language_detector.py predict "Hello, I need help signing in."\n' "$WINDUP_PYTHON"

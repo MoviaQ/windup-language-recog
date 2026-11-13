@@ -1,5 +1,7 @@
 # Learn PyTorch with Wind-Up
 
+The released model runs without PyTorch: `numpy_runtime.py` implements the same mean-embedding network in numpy. This tutorial covers training, which uses PyTorch: install it with `.venv/bin/python -m pip install -r requirements-training.txt`.
+
 PyTorch provides tensors, automatic differentiation, and modules with trainable parameters. This project turns those pieces into a complete classifier without requiring a large language model.
 
 ## 1. A tensor is a shaped array

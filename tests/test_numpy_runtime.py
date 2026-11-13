@@ -185,13 +185,6 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside"):
             numpy_runtime.Embedding(np.zeros((4, 2), np.float32)).mean(np.array([9]), np.array([0]))
 
-    @unittest.skipUnless((ROOT / "model.pt").exists(), "bundled model.pt is absent")
-    def test_bundled_model_npz_matches_pt(self):
-        npz = self.export(ROOT / "model.pt", name="bundled.npz")
-        legacy, released = LanguageDetector(ROOT / "model.pt"), LanguageDetector(npz)
-        self.assertTrue(np.array_equal(numpy_logits(legacy)[0], numpy_logits(released)[0]))
-        self.assertEqual(released.calibration, legacy.calibration)
-
 
 if __name__ == "__main__":
     unittest.main()
