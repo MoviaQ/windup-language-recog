@@ -23,8 +23,9 @@ jobs:
           tests.test_release tests.test_ticket_guard tests.test_guarded_ticket_api
           tests.test_evaluate_flores tests.test_prepare_multidomain tests.test_ticket_benchmark
       - run: python language_detector.py predict "Nie mogę zalogować się do konta."
-  full:
-    # Training, export and legacy .pt code paths need PyTorch (CPU wheels).
+  test:
+    # Whole suite. Training, export and legacy .pt code paths need PyTorch (CPU wheels).
+    # The job keeps the name "test": branch protection requires "test (3.10)" and "test (3.12)".
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
