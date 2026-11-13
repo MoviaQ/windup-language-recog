@@ -294,5 +294,145 @@ Against fastText lid.176 (restricted), the difference is +11.09 pp on full sente
 - The lid218e numbers use the restricted mapping onto our 100 codes; see [FLORES benchmark](flores-benchmark.md).
 - bs/hr remain at about 0.7 F1. FLORES treats them as separate languages, and their sentences are often hard to tell apart.
 - Not done for this checkpoint:
-  - acceptance calibration (`und`) and the support-ticket diagnostics;
+  - acceptance calibration (`und`) and the support-ticket diagnostics (done in Exp E);
   - compression; Exp B suggests int8 would give about 9.4 MB.
+
+## Exp E: acceptance policy for Exp D
+
+**Question.** Which `und` (abstain) policy should the single Exp D network carry, and how does the calibrated checkpoint compare with v21 on data that never took part in fitting?
+
+**Tool.** `tools/fit_acceptance.py` (commit `a91c6be`). It writes the policy into `checkpoint["calibration"]` in the v21 schema, using only keys that `predict_details` reads (`temperature`, `min_confidence`, `min_confidence_by_language`, `min_confidence_by_language_and_length`, `min_margin_by_length`) plus the `rule` string. Provenance goes into `checkpoint["acceptance_fit"]`: data paths, SHA-256 digests, row counts, overlap removals, the cross-fit table and the git commit.
+
+**Method.**
+- **Temperature.** Fitted by NLL on the labelled fitting texts.
+- **Thresholds.** Each threshold maximises `correct − 25 × wrong` over the texts it accepts. λ = 25 is the value v21 used, so the last text accepted in any cell has at least 96% precision.
+  - Cells with fewer than 200 texts fall back to the next coarser threshold: (language, length) → language → global.
+  - Length groups come from `evidence_profile`, so they match inference.
+- **Negatives.** Nynorsk texts always count as wrong. Each one weighs 0.41, so the whole Nynorsk set counts as much as one average label (`--negative-scale 1`).
+- **Choosing components.** Two-fold cross-fitting decides which components stay. Each candidate is fitted on one half and scored on the other, then the halves swap. FLORES lines are kept together, so all prefixes and all translations of a sentence fall in the same half. The candidate with the highest held-out objective is refitted on all fitting data. On a tie, the simpler candidate wins.
+- **Check after writing.** The tool reloads the written checkpoint and compares `predict_details` with its own vectorised simulation on 3,000 fitting texts. 2,988 agreed. The other 12 were float ties at a threshold and were skipped. Any other disagreement would have aborted the run.
+
+**Fitting data.** All of it is allowed by the split policy.
+
+| Source | Rows used |
+|---|---:|
+| FLORES-200 dev, 100 codes (full sentences + 20/50/100-char prefixes) | 365,313 |
+| `data/prepared_v3/valid.csv` | 99,200 |
+| Public validation `data/prepared/valid_short.csv` (rebuilt with `prepare_public_data.py` from the local archives) | 100,169 |
+| Negatives: FLORES dev `nno_Latn` (full + prefixes) | 3,699 |
+| Negatives: fitting half of `prepared_v3/negatives/nn.csv` (stable hash < 0.5) | 9,985 |
+
+- The tool refuses FLORES devtest and any file named `*test*`.
+- It also refuses any fitting text whose `text_key` occurs in reporting data: FLORES devtest (all codes and `nno_Latn`) and the public `test_short.csv`.
+- 2,427 such overlaps were removed with `--drop-reporting-overlap` and are recorded in the checkpoint. Almost all of them (2,416) are short FLORES dev prefixes that equal devtest prefixes.
+
+**Command.**
+
+```bash
+.venv/bin/python tools/fit_acceptance.py --model reports/exp_d/model-exp-d.pt \
+  --out reports/exp_d/model-exp-d-calibrated.pt --report reports/exp_e/fit_report.json \
+  --flores-dir data/raw_multidomain/flores200_dataset --flores-negative nno_Latn \
+  --csv prepared_v3_valid=data/prepared_v3/valid.csv --csv public_valid=data/prepared/valid_short.csv \
+  --negatives prepared_v3_nn=data/prepared_v3/negatives/nn.csv \
+  --reporting-csv data/prepared/test_short.csv --drop-reporting-overlap --workers 2
+```
+
+**Component choice** (held-out halves of the fitting data, both folds summed; coverage and precision over labelled texts):
+
+| Candidate | Held-out objective | Coverage | Accepted precision | Accepted errors | Nynorsk accepted |
+|---|---:|---:|---:|---:|---:|
+| none | 2,286 | 100.00 | 97.131 | 16,201 | 13,684 / 13,684 |
+| global | 379,727 | 87.56 | 99.893 | 527 | 9,788 |
+| global + margin | 382,065 | 88.03 | 99.905 | 473 | 9,957 |
+| length | 381,101 | 87.79 | 99.906 | 465 | 9,938 |
+| length + margin | 382,250 | 87.54 | 99.921 | 392 | 9,878 |
+| language | 483,842 | 89.94 | 99.825 | 889 | 90 |
+| **language + length** (selected) | **486,716** | **90.43** | 99.827 | 882 | 97 |
+| language + length + margin | 486,674 | 90.43 | 99.827 | 884 | 97 |
+
+- **Kept:** per-language and per-(language, length) confidence thresholds. Most of the objective comes from rejecting Nynorsk inside the `nb` cell.
+- **Dropped:**
+  - Margin floors lower the held-out objective by 42 once the language thresholds are in place. With one softmax, the margin adds nothing beyond confidence.
+  - Ensemble agreement does not exist for one network.
+  - Lexical single-word tables (`ambiguous_single_words`, `single_word_language`, `word_evidence_case_sensitive`) are not fitted. Only 1,671 fitting texts (0.3%) are a single Latin word. Under the confidence policy their accepted precision is already 99.07% (8 errors), so this data cannot show a benefit. v21's tables came from v21's training vocabulary and were not copied.
+
+**Result of the fit** (in-sample, fitting data):
+- Temperature 1.1685.
+- Global threshold 0.974. There are 100 per-language thresholds and 180 (language, length) cells.
+- Coverage 90.20%, accepted precision 99.902%, 72 / 13,684 Nynorsk texts accepted.
+
+**Reporting-only comparison with v21.** The calibrated Exp D was evaluated once, after the policy was fixed. Commands:
+
+```bash
+.venv/bin/python tools/evaluate_flores.py --flores-dir data/raw_multidomain/flores200_dataset --split devtest \
+  --extra-variants --model <model> --workers 2 --output <json> --predictions-out <jsonl>
+.venv/bin/python tools/evaluate_acceptance.py --model v21=model.pt \
+  --model expd_calibrated=reports/exp_d/model-exp-d-calibrated.pt --csv public_test=data/prepared/test_short.csv \
+  --negatives prepared_v3_nn=data/prepared_v3/negatives/nn.csv --flores-dir data/raw_multidomain/flores200_dataset \
+  --flores-negative nno_Latn --flores-predictions v21=<v21 jsonl> --flores-predictions expd_calibrated=<exp d jsonl> \
+  --tickets tests/fixtures/authored_tickets.jsonl --workers 2 --output reports/exp_e/reporting_comparison.json
+```
+
+FLORES-200 devtest. Each cell gives coverage / accepted precision (%), accepted errors, and macro FPR of accepted answers (%):
+
+| Slice | Texts | v21 | Exp D calibrated |
+|---|---:|---|---|
+| full | 101,200 | 93.63 / 99.960, 38, 0.0004 | **95.60 / 99.996, 4, 0.0000** |
+| ≤20 | 101,200 | 71.09 / 96.87, 2,252, 0.0225 | **76.38 / 99.52, 369, 0.0037** |
+| 21–50 | 101,135 | 88.17 / 99.554, 398, 0.0040 | **93.12 / 99.941, 56, 0.0006** |
+| 51–100 | 98,885 | 92.75 / 99.918, 75, 0.0008 | **95.26 / 99.993, 7, 0.0001** |
+| >100 | 74,246 | 94.08 / 99.974, 18, 0.0002 | **95.84 / 99.996, 3, 0.0000** |
+| extra variants (zho_Hant, prs, ckb) | 3,036 | 69.07 / 95.61, 92 | **99.87 / 100.00, 0** |
+
+Public test (`test_short.csv`, 189,599 rows, rebuilt locally; see caveats). Same cell format:
+
+| Group | Texts | v21 | Exp D calibrated |
+|---|---:|---|---|
+| all | 189,599 | **95.39** / 99.676, 586, 0.0031 | 91.63 / **99.770, 399, 0.0021** |
+| short (≤3 words) | 14,120 | **88.63** / 99.409, 74 | 73.28 / **99.749, 26** |
+| long | 175,479 | **95.94** / 99.696, 512 | 93.11 / **99.772, 373** |
+
+- Raw accuracy is 98.10% for v21 and 98.00% for Exp D.
+- The public data are v21's own domain: v21 was trained on WiLI/MASSIVE train, while Exp D held these sources' validation and test parts out.
+
+Nynorsk (not a label). Accepted means answered as some label:
+
+| Set | v21 accepted | Exp D calibrated accepted |
+|---|---|---|
+| Reporting half of `nn.csv` (10,015) | 6,612 (66.0%): nb 6,290, da 128, de 90, sv 50 | **85 (0.85%)**: sv 27, da 17, en 16, is 10, nb 7 |
+| FLORES devtest `nno_Latn` (3,777) | 2,506 (66.3%): nb 2,395, da 43 | **19 (0.50%)**: sv 8, is 5, nb 2, da 1 |
+
+Authored tickets (84 rows, AI-authored, not human-verified). C = correct, E = accepted wrong, U = withheld:
+
+| API | v21 | Exp D calibrated |
+|---|---|---|
+| whole-ticket `predict_details` (= `predict_ticket(allow_uncertain=True)`) | 70 C / 5 E / 9 U | 68 C / 6 E / 10 U |
+| `predict_guarded_ticket` | 70 C / 0 E / 14 U | 68 C / 1 E / 15 U |
+
+- Exp D loses two single-language tickets:
+  - an English one: raw top-1 `tn` at 0.18;
+  - a Czech one: confidence 0.53, below the `cs` threshold.
+- The guarded API accepts one mixed error-quote ticket as `de`; v21 withheld it.
+- All E come from the 13 mixed or error-quote tickets (gold `und`).
+
+**Reading.**
+- On FLORES devtest the calibrated Exp D answers more and is more precise than v21 on every length slice. On ≤20 characters it accepts 6.1× fewer errors at 5.3 pp more coverage.
+- Nynorsk is now rejected: 0.5–0.9% accepted, against 66% for v21.
+- On the public test, Exp D is more precise but answers 3.8 pp less, mostly on short texts.
+- On the tickets, the results are about the same, slightly worse: −2 C, +1 E.
+
+**Caveats.**
+- **Bokmål is effectively not answered.** Rejecting Nynorsk costs `nb`: the `nb` short cell rejects everything and the long cell needs confidence 1.0. Bokmål coverage on FLORES devtest full sentences is 0.2%, against 89.1% for v21. The cause is the negative weight, which is a product decision, not something the data can settle. Two alternative checkpoints were fitted with the same tool; their numbers below are cross-fitted on fitting data only, and they were not evaluated on reporting data:
+
+  | `--negative-scale` | Held-out coverage / precision | `nb` held-out coverage | Nynorsk accepted (held out) | File |
+  |---:|---|---:|---:|---|
+  | 1 (shipped) | 90.43 / 99.827 | 0.7% | 97 / 13,684 | `reports/exp_d/model-exp-d-calibrated.pt` |
+  | 0.1 | 90.70 / 99.827 | 18.6% | 831 / 13,684 | `reports/exp_e/model-exp-d-calibrated-nnscale0.1.pt` |
+  | 0 (measure only) | 91.42 / 99.823 | 78.5% | 9,604 / 13,684 | `reports/exp_e/model-exp-d-calibrated-nnscale0.pt` |
+
+- **English confidence is low.** On FLORES dev long English sentences, Exp D's median top-1 probability is 0.83; for de it is 0.996. The runner-up is usually a lower-resource label (su, tl, sn, yo, ga), which suggests English text inside those labels' training data. The `en` cells therefore need 0.80 (long) and 0.86 (short), and English coverage is 64.8% on FLORES devtest full sentences (v21: 45.6%). The fix belongs in the training data, not in the policy.
+- bs/hr stay almost entirely withheld (1.1–1.4% coverage), as in v21.
+- The public splits were rebuilt locally with `prepare_public_data.py` from the same archives (valid 100,173 / test 189,599 rows). v21's documented counts are 100,175 / 189,557, so the files are not byte-identical to v21's; probably different library versions in the cleanup, which was not investigated. Both models were scored on the same rebuilt file.
+- FLORES dev was already used to choose Exp D's checkpoint (epoch selection), and now its thresholds as well. Devtest remains untouched by both.
+- One fit, one seed, λ fixed in advance at v21's value; no λ sweep was run.
+- `tools/fit_acceptance.py` computes logits through the current torch `LanguageDetector` internals (`encode`, `model`). If inference moves to numpy, this one function has to follow. The policy itself depends only on `predict_details` semantics.
