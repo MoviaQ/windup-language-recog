@@ -14,3 +14,6 @@ build/
 *.egg-info/
 data/prepared_v*/
 data/raw_multidomain/
+
+# Agent worktrees (temporary checkouts)
+.claude/worktrees/
