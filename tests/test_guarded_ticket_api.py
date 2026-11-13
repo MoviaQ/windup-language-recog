@@ -255,7 +255,7 @@ class GuardedTicketApiTests(unittest.TestCase):
 class RealModelSmokeTests(unittest.TestCase):
     def test_bundled_model_guarded_clear_cases(self):
         from pathlib import Path
-        path = Path(__file__).resolve().parents[1] / "model.pt"
+        path = Path(__file__).resolve().parents[1] / "model.npz"
         if not path.exists():
             self.skipTest("Train or download the released checkpoint first")
         detector = LanguageDetector(path)

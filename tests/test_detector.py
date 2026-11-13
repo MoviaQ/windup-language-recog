@@ -48,13 +48,27 @@ class DetectorTests(unittest.TestCase):
                 [detector.predict(t) for t in texts],
             )
             self.assertEqual(detector.predict_many([]), [])
-            self.assertFalse(detector.model.training)
+            # Inference is deterministic (no dropout or other training-mode state).
+            self.assertEqual(detector.predict_details(texts[1]), detector.predict_details(texts[1]))
             self.assertEqual(detector.predict_details(texts[0])["language"], "und")
             self.assertEqual(
                 detector.predict_ticket("123 !!!", allow_uncertain=True), "und"
             )
             with self.assertRaises(ValueError):
                 detector.predict_many(texts, batch_size=0)
+
+    def test_identifier_removal_keeps_unspaced_scripts(self):
+        # FLORES jpn_Jpan devtest sentence prefix: the old `\w+` rule erased
+        # every kana/kanji next to "802.11n", leaving only punctuation.
+        self.assertEqual(
+            normalize_ticket_text("802.11n規格に準拠していれば、2.4Ghzで接続できます。"),
+            ". 規格に準拠していれば、 . で接続できます。",
+        )
+        self.assertEqual(normalize_ticket_text("foo_bar日本語のテキスト"), "日本語のテキスト")
+        # Latin identifiers are still removed as before.
+        self.assertEqual(normalize_ticket_text("kód123 nefunguje"), "nefunguje")
+        self.assertEqual(normalize_ticket_text("user_name ist falsch"), "ist falsch")
+        self.assertEqual(normalize_ticket_text("Server01 down"), "down")
 
     def test_cleaning_preserves_description_language(self):
         self.assertEqual(
@@ -106,7 +120,7 @@ class DetectorTests(unittest.TestCase):
         self.assertFalse(keys["train"] & authored)
 
     def test_bundled_model_if_present(self):
-        path = ROOT / "model.pt"
+        path = ROOT / "model.npz"
         if not path.exists():
             self.skipTest("Train or download the released checkpoint first")
         detector = LanguageDetector(path)

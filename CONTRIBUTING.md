@@ -20,7 +20,7 @@ Use readable Python, descriptive names, type hints where they clarify interfaces
 
 ## Issues
 
-Include expected and actual behavior, Python/PyTorch versions, operating system, the API or command used, and a minimal synthetic text that reproduces the issue. Do not include personal information or confidential input text. Feature requests should explain a concrete use case and the desired behavior.
+Include expected and actual behavior, Python/numpy versions (and PyTorch for training issues), operating system, the API or command used, and a minimal synthetic text that reproduces the issue. Do not include personal information or confidential input text. Feature requests should explain a concrete use case and the desired behavior.
 
 ## Using Codex
 

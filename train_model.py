@@ -2,6 +2,7 @@
 
 import argparse
 import copy
+import csv
 import hashlib
 import json
 import time
@@ -18,13 +19,124 @@ from language_detector import build_model, encode
 ROOT = Path(__file__).resolve().parent
 
 
+def _encode_ids(job: tuple[str, dict, int]) -> bytes:
+    text, config, cap = job
+    return np.asarray(
+        encode(
+            text,
+            buckets=config["buckets"],
+            ngrams=tuple(config["ngrams"]),
+            max_length=cap,
+            word_features=config.get("word_features", False),
+            preprocessing=config.get("preprocessing", "none"),
+            word_repeat=config.get("word_repeat", 4),
+        ),
+        dtype=np.int32,
+    ).tobytes()
+
+
+def encoding_config(config: dict) -> dict:
+    """The config keys that change encode() output (not model size or arch)."""
+    return {
+        "buckets": config["buckets"],
+        "ngrams": list(config["ngrams"]),
+        "word_features": config.get("word_features", False),
+        "preprocessing": config.get("preprocessing", "none"),
+        "word_repeat": config.get("word_repeat", 4),
+    }
+
+
+def _encode_batch(job: tuple[list[str], dict, int]) -> tuple[np.ndarray, np.ndarray]:
+    texts, config, cap = job
+    pieces = [np.frombuffer(_encode_ids((text, config, cap)), dtype=np.int32) for text in texts]
+    lengths = np.fromiter((len(piece) for piece in pieces), dtype=np.int64, count=len(pieces))
+    offsets = np.concatenate(([0], np.cumsum(lengths)[:-1]))
+    return np.concatenate(pieces), offsets
+
+
+class StreamingDataset:
+    """Encode every batch on the fly in worker processes; nothing is cached.
+
+    For corpora whose feature cache would not fit on disk. Encoding is
+    deterministic, so a given row order gives the same batches as
+    EncodedDataset.
+    """
+
+    def __init__(self, files: list[Path], languages: list[str], config: dict, cap: int, workers: int):
+        lookup = {language: index for index, language in enumerate(languages)}
+        self.texts: list[str] = []
+        targets: list[int] = []
+        unknown: Counter = Counter()
+        for file in files:
+            with file.open(encoding="utf-8", newline="") as stream:
+                reader = csv.DictReader(stream)
+                for row in reader:
+                    index = lookup.get(row["language"])
+                    if index is None:
+                        unknown[row["language"]] += 1
+                        continue
+                    self.texts.append(row["text"])
+                    targets.append(index)
+        if unknown:
+            raise ValueError(f"Labels outside the language list: {dict(unknown)}")
+        if not self.texts:
+            raise ValueError("Dataset is empty.")
+        self.targets = torch.tensor(targets, dtype=torch.long)
+        self.counts = Counter({languages[i]: c for i, c in Counter(targets).items()})
+        self.config, self.cap, self.workers = config, cap, workers
+
+    def __len__(self) -> int:
+        return len(self.targets)
+
+    def iter_batches(self, index_batches, prefetch: int | None = None):
+        """Yield batches in order, encoding at most `prefetch` ahead.
+
+        Pool.imap is not used: its feeder submits every job at once, so when
+        encoding outpaces training the finished batches pile up in memory
+        (Exp D on 14.9M rows was OOM-killed at 13 GB).
+        """
+        import multiprocessing
+        from collections import deque
+
+        prefetch = prefetch or 2 * self.workers
+        if prefetch < 1:
+            raise ValueError("prefetch must be positive")
+        batches = iter(index_batches)
+        pending: deque = deque()
+        self.max_in_flight = 0
+        with multiprocessing.get_context("spawn").Pool(self.workers) as pool:
+
+            def submit() -> None:
+                indices = next(batches, None)
+                if indices is not None:
+                    job = ([self.texts[i] for i in indices.tolist()], self.config, self.cap)
+                    pending.append((indices, pool.apply_async(_encode_batch, (job,))))
+                    self.max_in_flight = max(self.max_in_flight, len(pending))
+
+            for _ in range(prefetch):
+                submit()
+            while pending:
+                indices, result = pending.popleft()
+                ids, offsets = result.get()
+                submit()
+                yield indices, (torch.from_numpy(ids.astype(np.int64)), torch.from_numpy(offsets))
+
+
 class EncodedDataset:
     """Cache features on disk instead of encoding them in every epoch."""
 
-    def __init__(self, files: list[Path], languages: list[str], config: dict, cap: int):
+    def __init__(
+        self,
+        files: list[Path],
+        languages: list[str],
+        config: dict,
+        cap: int,
+        workers: int = 1,
+    ):
         signature = hashlib.sha256(
             json.dumps(
-                {"config": config, "cap": cap, "languages": languages}, sort_keys=True
+                {"encoding": encoding_config(config), "cap": cap, "languages": languages},
+                sort_keys=True,
             ).encode()
         )
         rows = []
@@ -34,6 +146,9 @@ class EncodedDataset:
         if not rows:
             raise ValueError("Dataset is empty.")
         lookup = {language: index for index, language in enumerate(languages)}
+        unknown = Counter(row["language"] for row in rows if row["language"] not in lookup)
+        if unknown:
+            raise ValueError(f"Labels outside the language list: {dict(unknown)}")
         self.targets = torch.tensor(
             [lookup[row["language"]] for row in rows], dtype=torch.long
         )
@@ -44,24 +159,27 @@ class EncodedDataset:
         if not ids_path.exists() or not offsets_path.exists():
             temporary = ids_path.with_suffix(".tmp")
             offsets = [0]
-            with temporary.open("wb") as stream:
-                for index, row in enumerate(rows):
-                    ids = np.asarray(
-                        encode(
-                            row["text"],
-                            buckets=config["buckets"],
-                            ngrams=tuple(config["ngrams"]),
-                            max_length=cap,
-                            word_features=config.get("word_features", False),
-                            preprocessing=config.get("preprocessing", "none"),
-                            word_repeat=config.get("word_repeat", 4),
-                        ),
-                        dtype=np.int32,
-                    )
-                    stream.write(ids.tobytes())
-                    offsets.append(offsets[-1] + len(ids))
-                    if (index + 1) % 10000 == 0:
-                        print(f"Encoding: {index + 1}/{len(rows)}", flush=True)
+            jobs = ((row["text"], config, cap) for row in rows)
+            pool = None
+            if workers > 1:
+                import multiprocessing
+
+                pool = multiprocessing.get_context("spawn").Pool(workers)
+                # imap preserves order, so the cache is identical to workers=1.
+                encoded = pool.imap(_encode_ids, jobs, chunksize=256)
+            else:
+                encoded = map(_encode_ids, jobs)
+            try:
+                with temporary.open("wb") as stream:
+                    for index, data in enumerate(encoded):
+                        stream.write(data)
+                        offsets.append(offsets[-1] + len(data) // 4)
+                        if (index + 1) % 100000 == 0:
+                            print(f"Encoding: {index + 1}/{len(rows)}", flush=True)
+            finally:
+                if pool is not None:
+                    pool.close()
+                    pool.join()
             temporary.replace(ids_path)
             np.save(offsets_path, np.asarray(offsets, dtype=np.int64))
         self.offsets = np.load(offsets_path)
@@ -72,12 +190,38 @@ class EncodedDataset:
     def __len__(self) -> int:
         return len(self.targets)
 
+    def iter_batches(self, index_batches):
+        for indices in index_batches:
+            yield indices, self.batch(indices)
+
     def batch(self, indices: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         selected = indices.numpy()
         starts, ends = self.offsets[selected], self.offsets[selected + 1]
         offsets = np.concatenate(([0], np.cumsum(ends - starts)[:-1]))
         ids = np.concatenate([self.ids[start:end] for start, end in zip(starts, ends)])
         return torch.from_numpy(ids.astype(np.int64)), torch.from_numpy(offsets)
+
+
+def _jsonable(value):
+    """Arguments for the JSON report: paths (also inside --valid-csv lists) as str."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    return value
+
+
+def temperature_row_probabilities(
+    targets: torch.Tensor, counts: list[int], alpha: float
+) -> torch.Tensor:
+    """Per-row draw probabilities giving language L a share proportional to n_L**alpha."""
+    counts_tensor = torch.tensor([float(count) for count in counts])
+    if (counts_tensor == 0).any():
+        missing = [index for index, count in enumerate(counts) if count == 0]
+        raise ValueError(f"Temperature sampling needs data for every class: {missing}")
+    share = counts_tensor**alpha
+    share /= share.sum()
+    return (share / counts_tensor)[targets]
 
 
 def score(
@@ -150,7 +294,46 @@ def main() -> None:
     parser.add_argument("--uniform-loss", action="store_true")
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--short-only", action="store_true")
+    parser.add_argument(
+        "--valid-csv",
+        type=Path,
+        action="append",
+        help="Validation CSV(s) for checkpoint selection, replacing the "
+        "data-dir valid*.csv files (e.g. FLORES dev from tools/export_flores_csv.py).",
+    )
+    parser.add_argument(
+        "--encode-workers",
+        type=int,
+        default=1,
+        help="Processes for building feature caches; output is identical.",
+    )
+    parser.add_argument(
+        "--stream-workers",
+        type=int,
+        default=0,
+        help="Encode training batches on the fly in N processes instead of "
+        "building a disk cache (for corpora whose cache does not fit on disk).",
+    )
+    parser.add_argument(
+        "--sampling-alpha",
+        type=float,
+        help="Temperature sampling: each epoch draws rows so that language L "
+        "has probability proportional to n_L**alpha (0.3 as in NLLB/OpenLID). "
+        "Requires --uniform-loss so classes are not rebalanced twice.",
+    )
     args = parser.parse_args()
+    if args.sampling_alpha is not None:
+        if not 0 < args.sampling_alpha <= 1:
+            parser.error("--sampling-alpha must be in (0, 1].")
+        if not args.uniform_loss:
+            parser.error(
+                "--sampling-alpha already rebalances languages; pass --uniform-loss "
+                "to disable the inverse-square-root loss weights."
+            )
+    if args.encode_workers < 1:
+        parser.error("--encode-workers must be positive.")
+    if args.stream_workers < 0:
+        parser.error("--stream-workers must be zero (cache) or positive.")
     if (
         min(
             args.epochs,
@@ -196,14 +379,30 @@ def main() -> None:
         for suffix in suffixes
         if (args.data_dir / f"train{suffix}.csv").exists()
     ]
-    valid_files = [
+    valid_files = args.valid_csv or [
         args.data_dir / f"valid{suffix}.csv"
         for suffix in ("", "_short", "_mixed", "_ascii")
         if (args.data_dir / f"valid{suffix}.csv").exists()
     ]
     print(f"Languages: {len(languages)}; preparing feature caches...", flush=True)
-    training = EncodedDataset(train_files, languages, config, args.train_length)
-    validation = EncodedDataset(valid_files, languages, config, args.train_length)
+    if args.stream_workers:
+        training = StreamingDataset(
+            train_files, languages, config, args.train_length, args.stream_workers
+        )
+    else:
+        training = EncodedDataset(
+            train_files, languages, config, args.train_length, args.encode_workers
+        )
+    validation = EncodedDataset(
+        valid_files, languages, config, args.train_length, args.encode_workers
+    )
+    row_probabilities = None
+    if args.sampling_alpha is not None:
+        row_probabilities = temperature_row_probabilities(
+            training.targets,
+            [training.counts[language] for language in languages],
+            args.sampling_alpha,
+        )
     model = build_model(len(languages), args.buckets, args.embedding_dim, args.hidden_dim, args.arch)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # Inverse-square-root frequency weights reduce large-language dominance.
@@ -221,9 +420,12 @@ def main() -> None:
         epoch_start = time.perf_counter()
         model.train()
         total_loss = 0.0
-        for indices in torch.randperm(len(training)).split(args.batch_size):
+        if row_probabilities is None:
+            order = torch.randperm(len(training))
+        else:
+            order = torch.multinomial(row_probabilities, len(training), replacement=True)
+        for indices, inputs in training.iter_batches(order.split(args.batch_size)):
             optimizer.zero_grad(set_to_none=True)
-            inputs = training.batch(indices)
             if args.dropout:
                 keep = torch.rand(len(inputs[0])) >= args.dropout
                 # Keep at least the first feature of each input.
@@ -278,14 +480,13 @@ def main() -> None:
         "seed": args.seed,
         "training_samples": len(training),
         "validation_samples": len(validation),
+        "train_files": [str(path) for path in train_files],
+        "valid_files": [str(path) for path in valid_files],
         "best_epoch": best_epoch,
         "best_valid_macro_f1": best_record["valid_macro_f1"],
         "seconds": time.perf_counter() - start,
         "history": history,
-        "arguments": {
-            key: str(value) if isinstance(value, Path) else value
-            for key, value in vars(args).items()
-        },
+        "arguments": {key: _jsonable(value) for key, value in vars(args).items()},
     }
     report["selection_metric"] = args.selection
     report["best_selection_score"] = best

@@ -1,19 +1,38 @@
-"""A compact PyTorch language classifier using hashed character n-grams."""
+"""A compact language classifier using hashed character n-grams.
+
+Inference runs on numpy (numpy_runtime.py). PyTorch is needed only to train
+and to read legacy ``.pt`` checkpoints; ``.npz`` release files load without it.
+"""
 
 import argparse
-import csv
 import hashlib
 import re
 import threading
 import unicodedata
 from pathlib import Path
 
-import torch
-from torch import nn
+import numpy as np
+
+import numpy_runtime
 
 BUCKETS = 8192
+DEFAULT_MODEL = Path("model.npz")
 _word_cache: dict[tuple[str, int], int] = {}
 _word_cache_lock = threading.Lock()
+# Training-side names kept importable from here; they load PyTorch on first use.
+_TORCH_EXPORTS = {
+    "batch", "LanguageModel", "LanguageModelMLP", "build_model", "train",
+    "LanguageModelEnsemble", "WEIGHT_STORAGES", "ROW_SCALE_SUFFIX", "quantize_rowwise_int8",
+    "compress_state_dict", "decompress_state_dict", "model_from_checkpoint",
+}
+
+
+def __getattr__(name):
+    if name in _TORCH_EXPORTS:
+        import torch_models
+
+        return getattr(torch_models, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def encode(
@@ -67,142 +86,32 @@ def encode(
     return features
 
 
-def batch(texts: list[str], **encoding_options) -> tuple[torch.Tensor, torch.Tensor]:
-    ids, offsets = [], []
+
+def encode_batch(texts: list[str], **encoding_options) -> tuple[np.ndarray, np.ndarray]:
+    """Flat feature ids and per-text offsets (numpy, int64)."""
+    ids: list[int] = []
+    offsets: list[int] = []
     for text in texts:
         offsets.append(len(ids))
         ids.extend(encode(text, **encoding_options))
-    return torch.tensor(ids, dtype=torch.long), torch.tensor(offsets, dtype=torch.long)
+    return np.asarray(ids, dtype=np.int64), np.asarray(offsets, dtype=np.int64)
 
 
-class LanguageModel(nn.Module):
-    """Original linear architecture (arch=linear). Do not change."""
+def load_model(model_path: str | Path):
+    """(metadata, numpy model) from a .npz release file or a legacy .pt checkpoint."""
+    path = Path(model_path)
+    if path.suffix == ".npz":
+        return numpy_runtime.load_npz(path)
+    try:
+        import torch
+    except ImportError as error:
+        raise ImportError(
+            f"{path} is a PyTorch checkpoint; reading it needs PyTorch "
+            "(pip install -r requirements-training.txt). Release .npz files do not."
+        ) from error
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    return numpy_runtime.from_checkpoint(checkpoint)
 
-    def __init__(self, languages: int, buckets: int = BUCKETS, embedding_dim: int = 32):
-        super().__init__()
-        self.embedding = nn.EmbeddingBag(buckets, embedding_dim, mode="mean")
-        self.classifier = nn.Linear(embedding_dim, languages)
-
-    def forward(self, ids: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-        return self.classifier(self.embedding(ids, offsets))
-
-
-class LanguageModelMLP(nn.Module):
-    """Experimental hidden-layer architecture (arch=mlp)."""
-
-    def __init__(
-        self,
-        languages: int,
-        buckets: int = BUCKETS,
-        embedding_dim: int = 32,
-        hidden_dim: int = 128,
-    ):
-        super().__init__()
-        self.embedding = nn.EmbeddingBag(buckets, embedding_dim, mode="mean")
-        self.hidden = nn.Linear(embedding_dim, hidden_dim)
-        self.activation = nn.ReLU()
-        self.classifier = nn.Linear(hidden_dim, languages)
-
-    def forward(self, ids: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor:
-        x = self.embedding(ids, offsets)
-        x = self.activation(self.hidden(x))
-        return self.classifier(x)
-
-
-def build_model(
-    languages: int, buckets: int = BUCKETS, embedding_dim: int = 32, hidden_dim: int = 128, arch: str = "linear"
-) -> nn.Module:
-    if arch == "mlp":
-        return LanguageModelMLP(languages, buckets, embedding_dim, hidden_dim)
-    if arch == "linear":
-        return LanguageModel(languages, buckets, embedding_dim)
-    raise ValueError(f"Unknown architecture: {arch}")
-
-
-def train(data: Path, output: Path, epochs: int) -> None:
-    torch.manual_seed(42)
-    torch.set_num_threads(1)
-    with data.open(encoding="utf-8", newline="") as file:
-        reader = csv.DictReader(file)
-        if not {"text", "language"}.issubset(reader.fieldnames or []):
-            raise ValueError("CSV must contain text and language columns.")
-        rows = list(reader)
-    if not rows or any(not row.get("language", "").strip() for row in rows):
-        raise ValueError("CSV must contain texts with nonempty language labels.")
-    languages = sorted({row["language"].strip() for row in rows})
-    if len(languages) < 2:
-        raise ValueError("Examples of at least two languages are required.")
-    # Validate all text before starting training.
-    for row in rows:
-        encode(row.get("text") or "")
-    model = LanguageModel(len(languages))
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.02)
-    criterion = nn.CrossEntropyLoss()
-    targets = torch.tensor([languages.index(row["language"].strip()) for row in rows])
-    for epoch in range(epochs):
-        for indices in torch.randperm(len(rows)).split(64):
-            inputs = batch([rows[i]["text"] for i in indices.tolist()])
-            optimizer.zero_grad()
-            loss = criterion(model(*inputs), targets[indices])
-            loss.backward()
-            optimizer.step()
-        if (epoch + 1) % 20 == 0 or epoch == epochs - 1:
-            print(
-                f"Epoch {epoch + 1}/{epochs}, last batch loss: {loss.item():.4f}"
-            )
-    output.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "languages": languages}, output)
-    print(f"Saved model: {output}")
-
-
-class LanguageModelEnsemble(nn.Module):
-    """Weighted logits from compatible models, with an optional agreement gate."""
-
-    def __init__(self, models, weights, temperatures, require_agreement=False):
-        super().__init__()
-        if len(models) != len(weights) or len(models) != len(temperatures) or not models:
-            raise ValueError("Invalid ensemble components")
-        if any(w <= 0 for w in weights) or any(t <= 0 for t in temperatures):
-            raise ValueError("Weights and temperatures must be positive")
-        self.members = nn.ModuleList(models)
-        total = sum(weights)
-        self.weights = [w / total for w in weights]
-        self.temperatures = temperatures
-        self.require_agreement = require_agreement
-
-    def forward_with_agreement(self, ids, offsets):
-        outputs = [model(ids, offsets) for model in self.members]
-        logits = sum(w * value / t for w, value, t in zip(self.weights, outputs, self.temperatures))
-        predictions = torch.stack([value.argmax(1) for value in outputs])
-        agree = (predictions == predictions[0]).all(0)
-        if not self.require_agreement:
-            agree = torch.ones_like(agree)
-        return logits, agree
-
-    def forward(self, ids, offsets):
-        return self.forward_with_agreement(ids, offsets)[0]
-
-def model_from_checkpoint(checkpoint):
-    config = checkpoint.get("config", {})
-    model = build_model(len(checkpoint["languages"]), config.get("buckets", BUCKETS), config.get("embedding_dim", 32), config.get("hidden_dim", 128), config.get("arch", "linear"))
-    model.load_state_dict(checkpoint["state_dict"])
-    ensemble = checkpoint.get("ensemble")
-    if ensemble:
-        companions = ensemble["companions"]
-        feature_keys = ("buckets", "ngrams", "max_length", "word_features", "preprocessing", "word_repeat")
-        defaults = {"buckets": BUCKETS, "ngrams": (1, 2, 3), "max_length": 2000, "word_features": False, "preprocessing": "none", "word_repeat": 4}
-        for other in companions:
-            if other["languages"] != checkpoint["languages"]:
-                raise ValueError("Ensemble members must use the same language order")
-            for key in feature_keys:
-                left = config.get(key, defaults[key])
-                right = other.get("config", {}).get(key, defaults[key])
-                if key == "ngrams":
-                    left, right = tuple(left), tuple(right)
-                if left != right:
-                    raise ValueError("Incompatible ensemble feature encoding: " + key)
-        model = LanguageModelEnsemble([model] + [model_from_checkpoint(c) for c in companions], ensemble["weights"], ensemble["temperatures"], ensemble.get("require_agreement", False))
-    return model
 
 def evidence_profile(text, *, case_sensitive=False):
     """Shared training/runtime profile for lexical evidence; no language labels."""
@@ -218,26 +127,21 @@ def evidence_profile(text, *, case_sensitive=False):
 
 
 class LanguageDetector:
-    def __init__(self, model_path: str | Path = "model.pt"):
-        checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
-        self.languages = checkpoint["languages"]
-        config = checkpoint.get("config", {})
-        self.encoding_options = {
-            "buckets": config.get("buckets", BUCKETS),
-            "ngrams": tuple(config.get("ngrams", (1, 2, 3))),
-            "max_length": config.get("max_length", 2000),
-            "word_features": config.get("word_features", False),
-            "preprocessing": config.get("preprocessing", "none"),
-            "word_repeat": config.get("word_repeat", 4),
-        }
-        self.model = model_from_checkpoint(checkpoint)
-        self.model.eval()
-        self.calibration = checkpoint.get("calibration", {})
+    def __init__(self, model_path: str | Path = DEFAULT_MODEL):
+        meta, self.model = load_model(model_path)
+        self.languages = meta["languages"]
+        self.encoding_options = numpy_runtime.encoding_options(meta["members"][0]["config"])
+        self.calibration = meta.get("calibration", {})
         self._ambiguous_single_words = set(self.calibration.get("ambiguous_single_words", []))
         self._single_word_language = self.calibration.get("single_word_language", {})
         self._cache: dict[str, str] = {}
         self._cache_size = 1000
         self._cache_lock = threading.Lock()
+
+    def clear_cache(self) -> None:
+        """Forget memoized predict() results (used by latency measurements)."""
+        with self._cache_lock:
+            self._cache.clear()
 
     def _cache_get(self, text: str) -> str | None:
         with self._cache_lock:
@@ -253,10 +157,7 @@ class LanguageDetector:
         cached = self._cache_get(text)
         if cached is not None:
             return cached
-        with torch.inference_mode():
-            index = (
-                self.model(*batch([text], **self.encoding_options)).argmax(dim=1).item()
-            )
+        index = int(self.model.logits(*encode_batch([text], **self.encoding_options)).argmax(axis=1)[0])
         result = self.languages[index]
         self._cache_put(text, result)
         return result
@@ -267,42 +168,30 @@ class LanguageDetector:
             raise ValueError("Batch size must be positive.")
         results: list[str | None] = [self._cache_get(text) for text in texts]
         pending = [i for i, result in enumerate(results) if result is None]
-        if pending:
-            with torch.inference_mode():
-                for start in range(0, len(pending), batch_size):
-                    group = pending[start : start + batch_size]
-                    chunk = [texts[i] for i in group]
-                    indices = (
-                        self.model(*batch(chunk, **self.encoding_options))
-                        .argmax(dim=1)
-                        .tolist()
-                    )
-                    for pos, index in zip(group, indices):
-                        language = self.languages[index]
-                        results[pos] = language
-                        self._cache_put(texts[pos], language)
+        for start in range(0, len(pending), batch_size):
+            group = pending[start : start + batch_size]
+            chunk = [texts[i] for i in group]
+            indices = self.model.logits(*encode_batch(chunk, **self.encoding_options)).argmax(axis=1).tolist()
+            for pos, index in zip(group, indices):
+                language = self.languages[index]
+                results[pos] = language
+                self._cache_put(texts[pos], language)
         return [result for result in results if result is not None]
 
     def predict_details(self, text: str) -> dict:
         """Return calibrated score details and abstain when evidence is insufficient."""
-        with torch.inference_mode():
-            inputs = batch([text], **self.encoding_options)
-            if isinstance(self.model, LanguageModelEnsemble):
-                logits, agreement = self.model.forward_with_agreement(*inputs)
-                agree = agreement.item()
-            else:
-                logits = self.model(*inputs)
-                agree = True
-            temperature = self.calibration.get("temperature", 1.0)
-            probabilities = (logits / temperature).softmax(dim=1)
-            confidence, index = probabilities.max(dim=1)
-            confidence = confidence.item()
-            best = self.languages[index.item()]
-            if probabilities.size(1) >= 2:
-                top2 = probabilities.topk(2, dim=1).values
-                margin = (top2[0, 0] - top2[0, 1]).item()
-            else:
-                margin = confidence
+        logits, agreement = self.model.logits_with_agreement(*encode_batch([text], **self.encoding_options))
+        agree = bool(agreement[0])
+        temperature = self.calibration.get("temperature", 1.0)
+        probabilities = numpy_runtime.softmax(logits / temperature)[0]
+        index = int(probabilities.argmax())
+        confidence = float(probabilities[index])
+        best = self.languages[index]
+        if probabilities.size >= 2:
+            top2 = np.sort(probabilities)[-2:]
+            margin = float(top2[1] - top2[0])
+        else:
+            margin = confidence
         threshold = self.calibration.get("min_confidence")
         threshold = self.calibration.get("min_confidence_by_language", {}).get(
             best, threshold
@@ -399,13 +288,15 @@ def main() -> None:
     training.add_argument("--epochs", type=int, default=120)
     prediction = commands.add_parser("predict")
     prediction.add_argument("text")
-    prediction.add_argument("--model", type=Path, default=Path("model.pt"))
+    prediction.add_argument("--model", type=Path, default=DEFAULT_MODEL)
     prediction.add_argument("--allow-uncertain", action="store_true", help="Return und when the calibrated acceptance policy rejects the input")
     args = parser.parse_args()
     try:
         if args.command == "train":
             if args.epochs < 1:
                 raise ValueError("The number of epochs must be positive.")
+            from torch_models import train
+
             train(args.data, args.model, args.epochs)
         else:
             detector = LanguageDetector(args.model)

@@ -1,6 +1,8 @@
 # Reproduce public-data training
 
-These commands reproduce the public **WiLI-2018** and **MASSIVE 1.1** base-model workflow. The bundled v21 weights additionally use support-domain adaptation and synthetic training augmentation. The complete adaptation workflow is not distributed, so these commands do not reproduce v21. Training is optional: normal inference uses the bundled `model.pt`.
+These commands reproduce the public **WiLI-2018** and **MASSIVE 1.1** base-model workflow. The bundled v22 model is trained instead on the multidomain corpus (see "Larger corpora" below and [experiments](experiments.md), Exp D, Exp E and the v22 release section, for the exact commands). Training is optional: normal inference uses the bundled `model.npz` and does not need PyTorch.
+
+Training writes PyTorch `.pt` checkpoints. To use one with the torch-free runtime, export it with `tools/export_numpy.py --input model-retrained.pt --output model-retrained.npz` (add `--storage int8_rowwise` for a 4× smaller embedding table). `LanguageDetector` also reads `.pt` files directly when PyTorch is installed.
 
 ## Prepare and train
 
@@ -40,7 +42,7 @@ The test split must be evaluated only after selecting the checkpoint. Do not cha
 
 ## Calibration and evaluation
 
-`evaluate_public.py --model model-retrained.pt` fits temperature on public validation data, stores it in that checkpoint, and evaluates public held-out and authored synthetic examples. This base-model workflow uses a fixed confidence cutoff of 0.9 after scaling; the cutoff is an operational choice, not a claim of 99% accuracy. Evaluation writes `reports/public_evaluation.json` and measures warmed CPU predictions at selected text lengths. The checkpoint file is updated with calibration metadata. Run this workflow on `model-retrained.pt`, not on the bundled v21 checkpoint: it replaces calibration and does not reproduce the v21 ensemble acceptance policy.
+`evaluate_public.py --model model-retrained.pt` fits temperature on public validation data, stores it in that checkpoint, and evaluates public held-out and authored synthetic examples. This base-model workflow uses a fixed confidence cutoff of 0.9 after scaling; the cutoff is an operational choice, not a claim of 99% accuracy. Evaluation writes `reports/public_evaluation.json` and measures warmed CPU predictions at selected text lengths. The checkpoint file is updated with calibration metadata. `--model` is required, and the script refuses checkpoints that carry a release acceptance policy (such as the bundled v21 `model.pt`), because it would replace that policy with a single temperature. Latency is measured with the prediction cache cleared before every call.
 
 ## Inspect and experiment
 
@@ -52,3 +54,26 @@ The test split must be evaluated only after selecting the checkpoint. Do not cha
 Try fewer hash buckets or smaller embeddings to study the memory/accuracy tradeoff. Compare weighted accuracy, macro recall, and macro F1. Temperature calibration and optional acceptance thresholds must use validation examples; accepted accuracy must always be reported together with coverage.
 
 See [third-party notices](../THIRD_PARTY_NOTICES.md) before redistributing source text, prepared databases, or a derivative model.
+
+## Larger corpora (experimental)
+
+For multi-million-row training sets:
+
+- `--encode-workers N` builds the feature cache in N processes; the cache is byte-identical to a single-process build.
+- `--sampling-alpha 0.3 --uniform-loss` draws each epoch's rows so that a language with n rows gets a share proportional to n^0.3 (temperature sampling as in NLLB, OpenLID and GlotLID). The trainer refuses `--sampling-alpha` without `--uniform-loss`, so languages are not rebalanced twice.
+- `--valid-csv PATH` replaces the data-dir validation files for checkpoint selection. `tools/export_flores_csv.py --flores-dir … --output reports/flores_dev.csv` writes FLORES-200 **dev** (full sentences and 20/50/100-character prefixes); devtest stays reserved for reporting ([FLORES benchmark](flores-benchmark.md)).
+
+### Multidomain corpus (experimental)
+
+`prepare_multidomain_data.py` builds `data/prepared_v2/` from web (MADLAD-400, FineWeb-2 slices, MaCoCu, *WaC), Wikipedia, short-sentence (Tatoeba, MASSIVE train) and other (OpenLID-v3 permissive tags and MT560, SETimes) text. It needs `requirements-training.txt` (adds pyarrow) and network access; `--help` lists the flags.
+
+```bash
+.venv/bin/python prepare_multidomain_data.py --cap 50000 --workers 4
+.venv/bin/python train_model.py --data-dir data/prepared_v2 ...   # not --short-only
+```
+
+- Every segment passes ftfy + NFC, a length filter, a per-label script filter (at least half of the letters in the label's scripts), exact and prefix/suffix near-deduplication, and a FLORES-200 filter over all 204 dev and devtest files (exact normalized match, or at least half of the segment's 8-word / 30-character shingles in FLORES). WiLI test, MASSIVE dev/test, the WiLI validation rows of `prepare_public_data.py`, `data/synthetic.csv` and the ticket fixtures are filtered the same way. Keys seen under more than one label are dropped everywhere.
+- Each language gets `--cap` training rows: 70% full segments in a 40/30/15/15 web/wiki/short/other mix (a domain short of rows passes its share to the others) and 30% crops of 4–16 words (16–60 characters for unspaced scripts). `valid.csv` is an in-corpus split (`--valid` rows per language) for early stopping only.
+- Label decisions: Sorani (ckb) and Kurmanji train `ku`; `azb`, `sh` and `yue` are dropped; `zh` includes Traditional script; `sr` and `uz` keep both scripts; `bs`/`hr`/`sr` stay separate. Nynorsk is not a label: its rows go to `negatives/nn.csv` for abstention calibration.
+- `manifest.json` records per-language and per-source counts, every drop counter (see `counter_legend`), licences, pinned dataset revisions and a `sources_lock` entry (URL, upstream sha256 when published, bytes read and their sha256) for every remote file read. `train_sources.tsv` gives the source of every row.
+- `--stream-workers N` encodes each training batch on the fly in N processes instead of building `data/cache` (about 9.2 GB per 5 million rows with the v21 encoding). Use it when the cache would not fit on disk. Batches are identical to the cached path; a one-epoch comparison on 20,000 rows gave bit-identical weights. Feature caches are keyed only on encoding settings (buckets, n-grams, word features, preprocessing), so changing `--embedding-dim`, `--hidden-dim` or `--arch` reuses a cache.

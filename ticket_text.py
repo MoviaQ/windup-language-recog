@@ -5,6 +5,15 @@ import re
 
 import ftfy
 
+# Characters that can form a technical identifier (ASCII alphanumerics,
+# underscore, Latin-1/Latin Extended-A/B letters). `\w` is deliberately not
+# used: in scripts written without spaces (Japanese, Chinese, Thai) a `\w+`
+# run spans the whole clause, so one embedded "802.11n" erased the sentence.
+_ID = r"[0-9A-Za-z_À-ɏ]"
+_TECHNICAL_ID = re.compile(
+    rf"(?<!{_ID})(?:(?={_ID}*[A-Za-z])(?={_ID}*\d){_ID}+|{_ID}+_{_ID}+)(?!{_ID})"
+)
+
 
 def normalize_ticket_text(text: str) -> str:
     text = html.unescape(ftfy.fix_text(text))
@@ -17,7 +26,7 @@ def normalize_ticket_text(text: str) -> str:
     )
     text = re.sub(r"[A-Za-z]:\\\S+", " ", text)
     # Remove request numbers, hostnames with digits, and technical identifiers.
-    text = re.sub(r"\b(?=\w*[A-Za-z])(?=\w*\d)\w+\b|\b\w+_\w+\b", " ", text)
+    text = _TECHNICAL_ID.sub(" ", text)
     text = re.sub(r"\b\d+(?:[.:/-]\d+)*\b", " ", text)
     return " ".join(text.split())
 
